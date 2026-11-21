@@ -1553,7 +1553,8 @@ pub fn collect(
 
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
-    let max_width = terminal_width().unwrap_or(usize::MAX);
+    let width = terminal_width();
+    let max_width = width.unwrap_or(usize::MAX);
 
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
@@ -2152,7 +2153,6 @@ pub fn collect(
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
     let table_render = render_table.then(|| {
-        let width = worktrunk::styling::terminal_width();
         let cache_path = (width.is_some()
             && layout
                 .columns

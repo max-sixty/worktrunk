@@ -70,4 +70,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 6 worktrees, 4 ahead  (↕ diverged from default  ^ main worktree  ⇡ ahead of remote  ↑ ahead of default  _ clean at default commit  | in sync with remote)[0m
+[2m○[22m [2mShowing 6 worktrees, 4 ahead
+↳ ↕ diverged from default  ^ main worktree  ⇡ ahead of remote  ↑ ahead of default  _ clean at default commit  | in sync with remote[0m

@@ -69,4 +69,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 7 worktrees, 1 with changes, 6 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default  ! unstaged changes  ? untracked files)[0m
+[2m○[22m [2mShowing 7 worktrees, 1 with changes, 6 ahead
+↳ ^ main worktree  | in sync with remote  ↑ ahead of default  ! unstaged changes  ? untracked files[0m

@@ -56,4 +56,5 @@ exit_code: 0
 
 ----- stderr -----
 
-○ Showing 0 worktrees, 2 branches  (/ branch without worktree  _ clean at default commit)
+○ Showing 0 worktrees, 2 branches
+↳ / branch without worktree  _ clean at default commit

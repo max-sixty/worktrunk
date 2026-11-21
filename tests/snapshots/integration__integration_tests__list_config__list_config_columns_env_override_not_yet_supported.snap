@@ -70,4 +70,5 @@ exit_code: 0
 [107m [0m invalid type: string "branch,age", expected a sequence
 [107m [0m in `list.columns`
 
-[2m○[22m [2mShowing 4 worktrees, 3 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default)[0m
+[2m○[22m [2mShowing 4 worktrees, 3 ahead
+↳ ^ main worktree  | in sync with remote  ↑ ahead of default[0m

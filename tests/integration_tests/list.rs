@@ -338,47 +338,43 @@ fn test_list_rotates_status_explanations() {
         output
     };
     let footer = |width: &str| {
-        String::from_utf8(run(&["list"], width).stderr)
-            .unwrap()
-            .lines()
-            .find(|line| line.contains("Showing"))
-            .unwrap()
-            .to_owned()
+        let stderr = String::from_utf8(run(&["list"], width).stderr).unwrap();
+        let (_, footer) = stderr.split_once("○ Showing").unwrap();
+        footer.trim_end().to_owned()
     };
 
-    let before = "○ Showing 1 worktree, 1 with changes";
-    let first = format!("{before}  (? untracked files)");
-    let second = format!("{before}  (^ main worktree)");
-    assert_eq!(footer("58"), first);
+    let first = "↳ ? untracked files";
+    let second = "↳ ^ main worktree";
+    assert!(footer("30").ends_with(&format!("\n{first}")));
     let cache_after_first = std::fs::read(&cache).unwrap();
-    assert_eq!(footer("36"), before);
-    run(&["list", "--format=json"], "58");
-    run(&["list", "statusline"], "58");
+    assert!(!footer("16").contains(first));
+    run(&["list", "--format=json"], "30");
+    run(&["list", "statusline"], "30");
     assert_eq!(std::fs::read(&cache).unwrap(), cache_after_first);
-    assert_eq!(footer("58"), second);
-    assert_eq!(footer("58"), first);
+    assert!(footer("30").ends_with(&format!("\n{second}")));
+    assert!(footer("30").ends_with(&format!("\n{first}")));
 
     for args in [
         &["config", "state", "get", "--format=json"][..],
         &["config", "state", "cache", "get", "--format=json"][..],
     ] {
-        let state: serde_json::Value = serde_json::from_slice(&run(args, "58").stdout).unwrap();
+        let state: serde_json::Value = serde_json::from_slice(&run(args, "30").stdout).unwrap();
         assert_eq!(
             state["status_explanations"],
             serde_json::json!(["? untracked files"])
         );
     }
-    let state = run(&["config", "state", "cache", "get"], "58");
+    let state = run(&["config", "state", "cache", "get"], "30");
     assert!(String::from_utf8_lossy(&state.stdout).contains("1 explanation shown"));
-    run(&["config", "state", "cache", "clear"], "58");
+    run(&["config", "state", "cache", "clear"], "30");
     assert!(!cache.exists());
-    assert_eq!(footer("58"), first);
+    assert!(footer("30").ends_with(&format!("\n{first}")));
 
     std::fs::write(&cache, b"{truncated").unwrap();
-    assert_eq!(footer("58"), first);
+    assert!(footer("30").ends_with(&format!("\n{first}")));
     std::fs::remove_file(&cache).unwrap();
     std::fs::create_dir(&cache).unwrap();
-    assert_eq!(footer("58"), first);
+    assert!(footer("30").ends_with(&format!("\n{first}")));
     assert!(cache.is_dir());
 }
 

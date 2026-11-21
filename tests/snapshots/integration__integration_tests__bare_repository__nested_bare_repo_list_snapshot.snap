@@ -55,4 +55,5 @@ exit_code: 0
 
 ----- stderr -----
 
-○ Showing 2 worktrees  (^ main worktree  _ clean at default commit)
+○ Showing 2 worktrees
+↳ ^ main worktree  _ clean at default commit

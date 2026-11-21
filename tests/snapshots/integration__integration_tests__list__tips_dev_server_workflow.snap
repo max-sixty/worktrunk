@@ -66,4 +66,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message  (? untracked files)[0m
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message
+↳ ↕ diverged from default  ? untracked files  ^ main worktree  ⇅ diverged from remote[0m

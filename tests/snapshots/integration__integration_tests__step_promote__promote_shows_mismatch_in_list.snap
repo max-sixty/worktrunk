@@ -67,4 +67,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead  (⚐ unexpected worktree path or duplicate branch  ^ main worktree  _ clean at default commit  | in sync with remote  ↑ ahead of default)[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead
+↳ ⚐ unexpected worktree path or duplicate branch  ^ main worktree  _ clean at default commit  | in sync with remote  ↑ ahead of default[0m

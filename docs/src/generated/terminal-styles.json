@@ -253,11 +253,19 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path  (+ staged files  ↑ ahead of default)"
+          "text": "Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ + staged files  ↑ ahead of default  ^ main worktree  ⇡ ahead of remote"
         }
       ]
     ],
-    "plain": "  Branch        Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…\n^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path  (+ staged files  ↑ ahead of default)"
+    "plain": "  Branch        Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…\n^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit\n\n○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path\n↳ + staged files  ↑ ahead of default  ^ main worktree  ⇡ ahead of remote"
   },
   {
     "lines": [
@@ -710,11 +718,19 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)"
+          "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
         }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      6814f02   30m  Add API tests\n^ main             ^⇅                                    ⇡1  ⇣1  41ee083    4d  Merge fix-auth: ha…\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…\n+ fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path\n↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
   },
   {
     "lines": [
@@ -1084,11 +1100,19 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path  (^ main worktree  ⇡ ahead of remote)"
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ ^ main worktree  ⇡ ahead of remote  ↑ ahead of default  ? untracked files"
         }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…\n+ wip-docs       ? –       +1                                    33323bc    1d  Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path  (^ main worktree  ⇡ ahead of remote)"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  Commit    Age  Message\n@ main             ^⇡                                    ⇡1      33323bc    1d  Initial commit\n+ feature-api      ↑ 🤖              ↑1        +1                70343f0    1d  Add REST API endpo…\n+ review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…\n+ wip-docs       ? –       +1                                    33323bc    1d  Initial commit\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path\n↳ ^ main worktree  ⇡ ahead of remote  ↑ ahead of default  ? untracked files"
   },
   {
     "lines": [
@@ -1511,11 +1535,19 @@
           "classes": [
             "wt-terminal-dim"
           ],
-          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message  (? untracked files)"
+          "text": "Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message"
+        }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ ↕ diverged from default  ? untracked files  ^ main worktree  ⇅ diverged from remote"
         }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  URL                     Commit\n@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083\n+ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68\n+ fix-typos        _|                                      |     http://localhost:14301  41ee083\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message  (? untracked files)"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Remote⇅  URL                     Commit\n@ main           ? ^⇅      +5                            ⇡1  ⇣1  http://localhost:12107  41ee083\n+ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24   ⇡3      http://localhost:10703  6814f02\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11     |     http://localhost:16460  b772e68\n+ fix-typos        _|                                      |     http://localhost:14301  41ee083\n\n○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path, Age, Message\n↳ ↕ diverged from default  ? untracked files  ^ main worktree  ⇅ diverged from remote"
   },
   {
     "lines": [
@@ -1881,9 +1913,17 @@
           ],
           "text": "Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
         }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
+        }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n\n○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message\n↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
   },
   {
     "lines": [
@@ -2355,9 +2395,17 @@
           ],
           "text": "Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
         }
+      ],
+      [
+        {
+          "classes": [
+            "wt-terminal-dim"
+          ],
+          "text": "↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
+        }
       ]
     ],
-    "plain": "  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message"
+    "plain": "  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI\n@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412\n^ main             ^⇅                                                                  ⇡1  ⇣1  #\n+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408\n+ fix-typos        _|                                                                    |     #410\n/ exp             /↕                 ↑2  ↓1  +137       Explore GraphQL schema and…\n/ wip             /↕                 ↑1  ↓1   +33       Start API documentation\n\n○ Showing 4 worktrees, 2 branches, 1 with changes, 4 ahead, hidden: Path, Commit, Age, Message\n↳ ↕ diverged from default  + staged files  ⇡ ahead of remote  ^ main worktree"
   },
   {
     "lines": [

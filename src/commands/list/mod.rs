@@ -364,7 +364,7 @@ fn status_legend(
         .flat_map(|item| item.status_symbols.explanations())
         .filter_map(|pair| {
             let width = visual_width(&pair);
-            (width + 4 <= remaining && visible.insert(pair.clone())).then_some((pair, width))
+            (width <= remaining && visible.insert(pair.clone())).then_some((pair, width))
         })
         .collect();
     if eligible.is_empty() {
@@ -377,9 +377,7 @@ fn status_legend(
     eligible.sort_by_key(|(pair, _)| !pair.starts_with(['✗', '✘', '⊂', '↕']));
     let mut legend = Vec::new();
     for (pair, width) in eligible {
-        // Opening the legend needs two spaces and parentheses. Later pairs
-        // only need the two-space separator.
-        let cost = width + if legend.is_empty() { 4 } else { 2 };
+        let cost = width + if legend.is_empty() { 0 } else { 2 };
         if cost <= remaining && shown.insert(pair.clone()) {
             remaining -= cost;
             legend.push(pair);
@@ -398,10 +396,8 @@ fn status_legend(
 ///
 /// `max_width` bounds the line, following [`format_with_gutter`]'s
 /// convention. An undetectable width wraps nothing and omits the legend.
-/// The hidden-column list grows with every column a narrow terminal
-/// drops, so the footer is longest exactly where there is least room for it —
-/// at 40 columns it ran to 67 for a table that fit. Continuations indent
-/// under the text, keeping them subordinate to the `○`.
+/// Long summaries wrap, with continuations aligned under the text. The
+/// explanations use the width of their own line.
 ///
 /// [`format_with_gutter`]: worktrunk::styling::format_with_gutter
 pub(crate) fn format_summary_message(
@@ -413,6 +409,7 @@ pub(crate) fn format_summary_message(
     max_width: Option<usize>,
 ) -> String {
     const INDENT: &str = "  "; // symbol + space, so continuations align under the text
+    const LEGEND_PREFIX: &str = "↳ ";
 
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
@@ -438,14 +435,13 @@ pub(crate) fn format_summary_message(
     .collect::<Vec<_>>()
     .join(&format!("\n{INDENT}"));
 
-    if let Some(shown) = shown
-        && !body.contains('\n')
-        && let Some(remaining) =
-            max_width.and_then(|w| w.checked_sub(INDENT.len() + visual_width(&body)))
-    {
-        let legend = status_legend(items, remaining, shown);
+    if let (Some(shown), Some(width)) = (shown, max_width) {
+        let budget = width.saturating_sub(visual_width(LEGEND_PREFIX));
+        let legend = status_legend(items, budget, shown);
         if !legend.is_empty() {
-            body.push_str(&format!("  ({})", legend.join("  ")));
+            body.push('\n');
+            body.push_str(LEGEND_PREFIX);
+            body.push_str(&legend.join("  "));
         }
     }
     format!("{INFO_SYMBOL} {dim}{body}{dim:#}")
@@ -638,15 +634,21 @@ mod tests {
             .into_owned()
         };
         let summary = "○ Showing 0 worktrees, 2 branches, hidden: Path; 1 task timed out";
-        let one = format!("{summary}  (✗ would conflict)");
-        let both = format!("{summary}  (✗ would conflict  ⇡ ahead of remote)");
+        let one = "↳ ✗ would conflict";
+        let both = "↳ ✗ would conflict  ⇡ ahead of remote";
         assert_eq!(render(None, true), summary);
         assert_eq!(render(Some(200), false), summary);
-        assert_eq!(render(Some(visual_width(&both)), true), both);
-        assert_eq!(render(Some(visual_width(&both) - 1), true), one);
-        assert_eq!(render(Some(visual_width(&one)), true), one);
-        assert_eq!(render(Some(visual_width(&one) - 1), true), summary);
-        assert_eq!(render(Some(30), true), render(Some(30), false));
+        for (width, legend) in [
+            (visual_width(both), both),
+            (visual_width(both) - 1, one),
+            (visual_width(one), one),
+        ] {
+            let wrapped = render(Some(width), false);
+            assert!(wrapped.contains('\n'));
+            assert_eq!(render(Some(width), true), format!("{wrapped}\n{legend}"));
+        }
+        let narrower = visual_width(one) - 1;
+        assert_eq!(render(Some(narrower), true), render(Some(narrower), false));
     }
 
     #[test]
@@ -658,7 +660,8 @@ mod tests {
         item.status_symbols.operation_state = Some(OperationState::None);
         item.status_symbols.worktree_state = Some(WorktreeState::DuplicateBranch);
         item.status_symbols.main_state = Some(MainState::Ahead);
-        let expected = "○ Showing 0 worktrees  (↑ ahead of default)";
+        let legend = "↳ ↑ ahead of default";
+        let width = Some(visual_width(legend));
         assert_eq!(
             format_summary_message(
                 &[item],
@@ -666,10 +669,13 @@ mod tests {
                 &[],
                 0,
                 Some(&mut ShownExplanations::new()),
-                Some(visual_width(expected))
+                width
             )
             .ansi_strip(),
-            expected
+            format!(
+                "{}\n{legend}",
+                format_summary_message(&[], false, &[], 0, None, width).ansi_strip()
+            )
         );
     }
 
@@ -690,7 +696,7 @@ mod tests {
         let pairs = items
             .each_ref()
             .map(|item| item.status_symbols.explanations().next().unwrap());
-        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap() + 4;
+        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap();
         let mut shown = ShownExplanations::new();
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[2].clone()]);

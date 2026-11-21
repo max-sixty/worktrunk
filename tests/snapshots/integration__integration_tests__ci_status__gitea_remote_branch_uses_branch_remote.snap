@@ -69,4 +69,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 4 worktrees, 1 remote branch, 4 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default  / branch without worktree)[0m
+[2m○[22m [2mShowing 4 worktrees, 1 remote branch, 4 ahead
+↳ ^ main worktree  | in sync with remote  ↑ ahead of default  / branch without worktree[0m

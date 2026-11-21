@@ -67,4 +67,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Path, Message  (^ main worktree  | in sync with remote)[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Path, Message
+↳ _ clean at default commit[0m

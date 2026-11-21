@@ -68,4 +68,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 6 worktrees, 3 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default  ⊘ detached HEAD)[0m
+[2m○[22m [2mShowing 6 worktrees, 3 ahead
+↳ ^ main worktree  | in sync with remote  ↑ ahead of default  ⊘ detached HEAD  _ clean at default commit[0m

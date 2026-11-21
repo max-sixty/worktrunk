@@ -68,4 +68,5 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead  (↕ diverged from default  ✗ would conflict  ^ main worktree  ⇡ ahead of remote  ! unstaged changes)[0m
+[2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead
+↳ ↕ diverged from default  ✗ would conflict  ^ main worktree  ⇡ ahead of remote  ! unstaged changes[0m
