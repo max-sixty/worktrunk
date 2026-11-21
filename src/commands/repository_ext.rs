@@ -6,7 +6,7 @@ use color_print::cformat;
 use worktrunk::config::StageMode;
 use worktrunk::git::{
     BranchDeletionMode, GitError, IntegrationReason, RefSnapshot, Repository, WorkingTree,
-    WorktreeInfo, parse_porcelain_z, parse_untracked_files,
+    WorktreeInfo, parse_porcelain_z, parse_untracked_files, path_dir_name,
 };
 use worktrunk::path::format_path_for_display;
 use worktrunk::styling::{eprintln, format_with_gutter, hint_message, warning_message};
@@ -278,6 +278,24 @@ impl RepositoryCliExt for Repository {
             && !self.worktree_at(path).is_linked()?
         {
             return Err(GitError::CannotRemoveMainWorktree.into());
+        }
+
+        // `--force` waives this worktree's changes, never another checkout's,
+        // and an ignored nested checkout is invisible to the dirty gate.
+        if let Resolved::Worktree {
+            ref path,
+            ref branch,
+            ..
+        } = resolved
+            && let Some(nested) = self.worktree_nested_in(path)?
+        {
+            return Err(GitError::WorktreeContainsWorktree {
+                name: branch
+                    .clone()
+                    .unwrap_or_else(|| path_dir_name(path).to_string()),
+                nested,
+            }
+            .into());
         }
 
         // Phase 3: Branch-level validation (applies to ALL paths).

@@ -101,6 +101,48 @@ impl Repository {
             .map(Vec::as_slice)
     }
 
+    /// A registered checkout inside `path`, from this repository's inventory
+    /// ([`Self::list_worktrees`]). Ignored nested checkouts are invisible to the
+    /// dirty gate, but renaming or removing their parent destroys their work.
+    /// Canonical paths catch registrations made through symlinks; a checkout
+    /// whose directory is gone has nothing to protect, while any other
+    /// resolution error fails closed.
+    ///
+    /// Each checkout is resolved once per inventory, so a batch of removals
+    /// planned against one inventory resolves N paths, not N per target.
+    pub fn worktree_nested_in(&self, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+        use std::ops::Bound::{Excluded, Unbounded};
+
+        let root = canonicalize(path).context("Failed to resolve worktree for removal")?;
+        let checkouts = self.cache.checkout_paths.get_or_try_init(|| {
+            let mut checkouts = std::collections::BTreeSet::new();
+            for worktree in self.list_worktrees()? {
+                match canonicalize(&worktree.path) {
+                    Ok(path) => {
+                        checkouts.insert(path);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "Failed to resolve worktree @ {}",
+                                format_path_for_display(&worktree.path)
+                            )
+                        });
+                    }
+                }
+            }
+            anyhow::Ok(checkouts)
+        })?;
+        // `Path` orders by component, so the paths inside `root` sort directly
+        // after it: the next one either lies inside or nothing does.
+        Ok(checkouts
+            .range::<Path, _>((Excluded(root.as_path()), Unbounded))
+            .next()
+            .filter(|next| next.starts_with(&root))
+            .cloned())
+    }
+
     /// Find the worktree path for a given branch, if one exists.
     ///
     /// A branch normally maps to at most one worktree, but `git worktree add

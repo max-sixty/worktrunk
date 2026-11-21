@@ -25,6 +25,30 @@ fn test_prune_no_merged(mut repo: TestRepo) {
     ));
 }
 
+/// A merged worktree holding another checkout stays and says why, in the
+/// preview and the removal alike, while a plain merged worktree still goes.
+#[rstest]
+fn test_prune_skips_worktree_containing_worktree(mut repo: TestRepo) {
+    std::fs::write(repo.root_path().join(".gitignore"), ".worktrees/\n").unwrap();
+    repo.commit("Ignore nested worktrees");
+    let parent = repo.add_worktree("parent");
+    let nested = repo.add_worktree_at_path("child", &parent.join(".worktrees/child"));
+    let work = nested.join("uncommitted.txt");
+    std::fs::write(&work, "only copy").unwrap();
+    let plain = repo.add_worktree("plain");
+
+    assert_cmd_snapshot!(
+        "prune_skips_worktree_containing_worktree_dry_run",
+        make_snapshot_cmd(&repo, "step", &["prune", "--dry-run", "--min-age=0s"], None)
+    );
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
+    assert_eq!(std::fs::read_to_string(&work).unwrap(), "only copy");
+    assert!(parent.join(".git").exists());
+    assert!(!plain.exists());
+}
+
 /// Prune dry-run shows merged worktrees.
 ///
 /// Two worktrees exercise the "N worktrees" plural path in the dry-run hint.
