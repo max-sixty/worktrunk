@@ -152,7 +152,7 @@ Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config she
 **PyPI** (experimental):
 
 ```bash
-uv tool install worktrunk && wt config shell install
+uv tool install worktrunk@latest && wt config shell install
 ```
 
 Python tools can also list `worktrunk` as a dependency, or run it without installing: `uvx --from worktrunk wt list`.
