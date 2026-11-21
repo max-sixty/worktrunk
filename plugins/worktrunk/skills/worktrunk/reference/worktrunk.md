@@ -126,6 +126,14 @@ conda install -c conda-forge worktrunk && wt config shell install
 
 Or with [Pixi](https://pixi.sh): `pixi global install worktrunk && wt config shell install`.
 
+**PyPI** (experimental):
+
+```bash
+uv tool install worktrunk@latest && wt config shell install
+```
+
+Python tools can also list `worktrunk` as a dependency, or run it without installing: `uvx --from worktrunk wt list`.
+
 </details>
 
 ## Quick start
