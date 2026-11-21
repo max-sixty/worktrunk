@@ -40,8 +40,9 @@ ARCHIVE_RE = re.compile(r"^worktrunk-(?P<target>.+?)\.(?:tar\.xz|zip)$")
 RELATIVE_LINK_RE = re.compile(r'\b(src|href)="(?![a-z][a-z0-9+.-]*:|#|/)')
 
 EXPERIMENTAL_NOTE = (
-    "> **Experimental:** the PyPI package is new; GitHub Releases, Homebrew and "
-    "cargo are the main install channels."
+    "> **Experimental:** the PyPI package is new; install with `uv tool install worktrunk`, "
+    "then `wt config shell install`. GitHub Releases, Homebrew and cargo are the main "
+    "install channels."
 )
 
 # Fixed timestamp so rebuilding the same archives yields identical wheels.
