@@ -418,6 +418,7 @@ What to flag:
 | conda-forge | `curl -sSf https://api.anaconda.org/package/conda-forge/worktrunk` (`latest_version`); Repology doesn't list it | a release |
 | home-manager | `modules/programs/worktrunk.nix` in `nix-community/home-manager` | the shell init lines, its own Claude Code hook for each event in `plugins/worktrunk/hooks/hooks.json`, the skills path inside the package |
 | nixpkgs | `pkgs/by-name/wo/worktrunk/package.nix` in `NixOS/nixpkgs` | the `skills/` directories it installs by name, the shell completions command |
+| aqua registry | `pkgs/max-sixty/worktrunk/registry.yaml` in `aquaproj/aqua-registry`, which `mise`'s `aqua:` backend also reads | the release asset names, and the cosign certificate identity each release's `packslip.sigstore.json` is verified against |
 
 Repology reports each distribution's version and whether it is outdated:
 
