@@ -177,6 +177,8 @@ The [2mtarget/[0m directory is huge (often 1-10GB). Copying with reflink cuts 
 [107m [0m [2m[36m[pre-start][0m
 [107m [0m [2mdeps = [0m[2m[32m"ln -sf {{ primary_worktree_path }}/node_modules ."[0m
 
+Git sees the symlink as a file, so [2m.gitignore[0m needs [2mnode_modules[0m without a trailing slash. [2mnode_modules/[0m matches only directories: the link stays untracked, a commit can pick it up, and merging that commit replaces the primary worktree's [2mnode_modules[0m with a link to itself.
+
 [32mPython[0m
 
 Virtual environments contain absolute paths and can't be copied. Use [2muv sync[0m instead — it's fast enough that copying isn't worth it.

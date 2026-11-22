@@ -531,6 +531,8 @@ The `target/` directory is huge (often 1-10GB). Copying with reflink cuts first 
 deps = "ln -sf {{ primary_worktree_path }}/node_modules ."
 ```
 
+Git sees the symlink as a file, so `.gitignore` needs `node_modules` without a trailing slash. `node_modules/` matches only directories: the link stays untracked, a commit can pick it up, and merging that commit replaces the primary worktree's `node_modules` with a link to itself.
+
 #### Python
 
 Virtual environments contain absolute paths and can't be copied. Use `uv sync` instead — it's fast enough that copying isn't worth it.
