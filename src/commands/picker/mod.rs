@@ -492,9 +492,9 @@ impl AltXRemover {
             if let Err(e) = Self::do_removal(&repo, &result, &approvals) {
                 tracing::warn!(selected_output = %selected_output, error = %e, "picker: removal of '{selected_output}' errored: {e:#}");
             }
-            // A removal that keeps its branch never reaches here — that's the
-            // morph path (`morph_and_remove_in_background`). So a surviving
-            // target means the removal itself failed: put the row back.
+            // A surviving target means the removal itself failed: put the row
+            // back. A stale entry whose branch stays (`stale_entry_keeps_branch`)
+            // counts as removed once its registration is gone.
             if removal_target_still_present(&repo, &result)
                 && let Some((item, pos)) = removed
             {
@@ -1073,11 +1073,17 @@ fn run_preview_when_settled(
 
 /// A removal's user-facing subject for the `kept` warning: a `(label, noun)`
 /// pair where `noun` is `worktree` or `branch` and `label` is the branch name
-/// (or the worktree's display path for a detached worktree). Computed before the
-/// `RemovalPlan` moves into the background thread; surfaced by
-/// [`restore_failed_removal`].
+/// (or the worktree's display path for a detached worktree). A stale worktree
+/// entry whose branch stays ([`stale_entry_keeps_branch`]) is a `worktree`: the
+/// prune is all that removal attempts. Computed before the `RemovalPlan` moves
+/// into the background thread; surfaced by [`restore_failed_removal`].
 fn removal_failure_subject(result: &RemovalPlan) -> (String, &'static str) {
     match result {
+        RemovalPlan::BranchOnly {
+            branch_name,
+            prune_entry: Some(_),
+            ..
+        } if !removal_will_remove_target(result) => (branch_name.clone(), "worktree"),
         RemovalPlan::Worktree {
             branch_name: Some(branch),
             ..
@@ -4000,7 +4006,8 @@ pub mod tests {
 
     /// `removal_failure_subject` prefers the branch name (falling back to the
     /// worktree path for a detached worktree) and pairs it with the right noun:
-    /// `worktree` for a worktree removal, `branch` for a branch-only deletion.
+    /// `worktree` for a worktree removal or a stale entry's prune, `branch` for a
+    /// branch-only deletion.
     #[test]
     fn test_removal_failure_subject() {
         let branched = RemovalPlan::Worktree {
@@ -4049,6 +4056,21 @@ pub mod tests {
         assert_eq!(
             super::removal_failure_subject(&branch_only),
             ("orphan".to_string(), "branch")
+        );
+
+        // A stale worktree entry whose branch stays: only the prune can fail.
+        let stale_keeps_branch = RemovalPlan::BranchOnly {
+            branch_name: "feature".to_string(),
+            deletion_mode: BranchDeletionMode::Keep,
+            prune_entry: Some(std::path::PathBuf::from("/tmp/wt-stale")),
+            target_branch: None,
+            integration_reason: None,
+            branch_checked_out_at: None,
+            detached_worktree: None,
+        };
+        assert_eq!(
+            super::removal_failure_subject(&stale_keeps_branch),
+            ("feature".to_string(), "worktree")
         );
     }
 
