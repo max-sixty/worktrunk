@@ -4377,6 +4377,37 @@ fn test_step_commit_show_prompt_branch_previews_target_worktree(mut repo: TestRe
     );
 }
 
+/// Run from a Git hook or a `!wt` alias, `wt` inherits `GIT_DIR` and
+/// `GIT_INDEX_FILE` naming the invoking worktree. The staged diff of the
+/// `--branch` worktree must still read that worktree's index and HEAD.
+#[rstest]
+fn test_step_commit_show_prompt_branch_ignores_inherited_git_context(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    fs::write(feature_wt.join("feature_only.txt"), "line one\n").unwrap();
+    repo.run_git_in(&feature_wt, &["add", "feature_only.txt"]);
+    fs::write(repo.root_path().join("caller_only.txt"), "caller\n").unwrap();
+    repo.run_git(&["add", "caller_only.txt"]);
+
+    let git_dir = repo.root_path().join(".git");
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["commit", "--show-prompt", "--branch", "feature"],
+        None,
+    )
+    .env("GIT_DIR", &git_dir)
+    .env("GIT_WORK_TREE", repo.root_path())
+    .env("GIT_INDEX_FILE", git_dir.join("index"))
+    .output()
+    .expect("wt step commit --show-prompt --branch failed to spawn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{output:?}");
+    assert!(
+        stdout.contains("feature_only.txt") && !stdout.contains("caller_only.txt"),
+        "the preview must diff the target worktree's index; got:\n{stdout}"
+    );
+}
+
 // =============================================================================
 // step rebase tests
 // =============================================================================

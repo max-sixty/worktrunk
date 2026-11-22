@@ -13,7 +13,14 @@ use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
 use super::{DiffStats, LineDiff, Repository};
 
 enum DiffSource<'a> {
-    Repository { repo: &'a Repository, path: PathBuf },
+    /// Git runs at `path`. A `worktree_local` diff reads a worktree `wt`
+    /// resolved, so it scrubs inherited Git discovery variables the way
+    /// [`WorkingTree::run_command`] does; a repo-level diff keeps them.
+    Repository {
+        repo: &'a Repository,
+        path: PathBuf,
+        worktree_local: bool,
+    },
     TempIndex(&'a TempIndex),
 }
 
@@ -47,21 +54,35 @@ pub struct PreparedDiff<'a> {
 }
 
 impl<'a> PreparedDiff<'a> {
-    fn new(repo: &'a Repository, path: PathBuf, sides: DiffSides) -> Self {
+    fn new(repo: &'a Repository, path: PathBuf, worktree_local: bool, sides: DiffSides) -> Self {
         Self {
-            source: DiffSource::Repository { repo, path },
+            source: DiffSource::Repository {
+                repo,
+                path,
+                worktree_local,
+            },
             sides,
         }
     }
 
     fn command(&self, args: &[String]) -> Cmd {
         match &self.source {
-            DiffSource::Repository { repo, path } => repo.with_object_store_env(
-                Cmd::new("git")
+            DiffSource::Repository {
+                repo,
+                path,
+                worktree_local,
+            } => {
+                let cmd = Cmd::new("git")
                     .args(args.iter().cloned())
                     .current_dir(path)
-                    .context(path_to_logging_context(path)),
-            ),
+                    .context(path_to_logging_context(path));
+                let cmd = if *worktree_local {
+                    cmd.scrub_git_discovery_env()
+                } else {
+                    cmd
+                };
+                repo.with_object_store_env(cmd)
+            }
             DiffSource::TempIndex(index) => index.command(args.iter().cloned()),
         }
     }
@@ -149,6 +170,7 @@ impl Repository {
         PreparedDiff::new(
             self,
             self.discovery_path().to_path_buf(),
+            false,
             DiffSides::Commits(from.into(), to.into()),
         )
     }
@@ -160,6 +182,7 @@ impl<'repo> WorkingTree<'repo> {
         PreparedDiff::new(
             self.repo,
             self.path.clone(),
+            true,
             DiffSides::WorkingTree(base.into()),
         )
     }
@@ -183,6 +206,7 @@ impl<'repo> WorkingTree<'repo> {
         PreparedDiff::new(
             self.repo,
             self.path.clone(),
+            true,
             DiffSides::Commits(from.into(), to.into()),
         )
     }
@@ -191,7 +215,12 @@ impl<'repo> WorkingTree<'repo> {
     ///
     /// For the changes a commit would record, `base` is [`Self::index_base`].
     pub fn prepare_staged_diff(&self, base: impl Into<String>) -> PreparedDiff<'repo> {
-        PreparedDiff::new(self.repo, self.path.clone(), DiffSides::Staged(base.into()))
+        PreparedDiff::new(
+            self.repo,
+            self.path.clone(),
+            true,
+            DiffSides::Staged(base.into()),
+        )
     }
 }
 
