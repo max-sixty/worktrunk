@@ -439,9 +439,11 @@ impl AltXRemover {
     /// Drop the selected row and remove its target on a background thread.
     ///
     /// For a removal that will remove the row entirely — a worktree whose branch
-    /// is *also* deleted (integrated, or force), or a force-deleted branch-only
-    /// row. A worktree removal that *keeps* its branch never reaches here; that's
-    /// the in-place morph ([`morph_and_remove_in_background`](Self::morph_and_remove_in_background)).
+    /// is *also* deleted (integrated, or force), a force-deleted branch-only
+    /// row, or a stale worktree row whose kept branch no row would show (see
+    /// [`stale_entry_keeps_branch`]). A worktree removal that *keeps* its
+    /// branch never reaches here; that's the in-place morph
+    /// ([`morph_and_remove_in_background`](Self::morph_and_remove_in_background)).
     /// The `output()` token is unique per row (a `worktree-path:` path for
     /// worktrees), so this drops exactly the selected row even when several
     /// detached rows share the `(detached)` branch label.
@@ -572,9 +574,11 @@ impl AltXRemover {
     /// the worktree on a background thread.
     ///
     /// For a `Worktree` removal that [`worktree_removal_keeps_branch`]
-    /// predicts will keep its (unmerged) branch. The row never leaves its slot:
-    /// the morph rewrites the row's shared `rendered` line to the branch line
-    /// (rendered on the live layout — gutter `+` → `/`, path blank), flips the
+    /// predicts will keep its (unmerged) branch, or a stale worktree row whose
+    /// registration is pruned and whose branch stays
+    /// ([`stale_entry_keeps_branch`]). The row never leaves its slot: the morph
+    /// rewrites the row's shared `rendered` line to the branch line (rendered on
+    /// the live layout — gutter `+` → `/`, path blank), flips the
     /// row's [`morphed`](items::LocalCheckout::morphed) flag (so `output()`
     /// becomes the branch token), dims the `working_tree` preview tab (no worktree
     /// left to diff), and re-keys the row's `alt-y`/`alt-o` shortcut entry to the
@@ -720,6 +724,9 @@ impl AltXRemover {
     ///     standing in has to switch you away first, which the picker declines);
     ///   - keeps its (unmerged) branch → morph to `/ branch` in place;
     ///   - removes the target → drop the row;
+    ///   - stale worktree row (directory deleted outside `wt`) whose branch stays
+    ///     → unregister the entry, morphing to `/ branch` when no live sibling
+    ///     shows the branch and dropping the row otherwise;
     ///   - branch-only row whose branch is unmerged → stays put, explained.
     ///
     /// Runs on skim's event loop (the `alt-x` keybinding callback), so the row
@@ -747,11 +754,33 @@ impl AltXRemover {
                 } else if removal_will_remove_target(&result) {
                     self.drop_and_remove_in_background(selected_output, planning_repo, result);
                     RemovalEffect::Dropped
+                } else if let Some(shows_branch) = stale_entry_keeps_branch(&planning_repo, &result)
+                {
+                    // A stale worktree row whose branch stays: unregistering the
+                    // entry is the whole removal, as in `wt remove`.
+                    match shows_branch {
+                        Some(branch) => self.morph_and_remove_in_background(
+                            selected_output,
+                            branch,
+                            planning_repo,
+                            result,
+                        ),
+                        None => {
+                            self.drop_and_remove_in_background(
+                                selected_output,
+                                planning_repo,
+                                result,
+                            );
+                            RemovalEffect::Dropped
+                        }
+                    }
                 } else {
-                    // The only non-removing outcome: `removal_will_remove_target`
-                    // returns false solely for an unmerged `BranchOnly` row (a
-                    // `Worktree` always removes, so it never reaches here), so
-                    // this arm is always that row — keep it, explained.
+                    // The only non-removing outcome left: `removal_will_remove_target`
+                    // returns false for a `BranchOnly` plan that keeps its branch, and
+                    // the stale-entry arm above takes every one that carries a
+                    // registration to prune (a `Worktree` always removes, so it never
+                    // reaches here). So this arm is always an unmerged branch row —
+                    // keep it, explained.
                     // `keep_unremovable_row` taking the branch name — not the whole
                     // result — keeps that narrowing at the type level.
                     if let RemovalPlan::BranchOnly { branch_name, .. } = &result {
@@ -1169,13 +1198,48 @@ fn worktree_removal_keeps_branch(repo: &Repository, result: &RemovalPlan) -> Opt
 /// created only when removing the worktree the shell is sitting in — see
 /// [`crate::output::handlers`]). A successful removal renames the whole tree away;
 /// a failed one leaves it intact.
+///
+/// A `BranchOnly` plan that keeps its branch (a stale worktree row reached
+/// through [`stale_entry_keeps_branch`]) targets only the registration, so its
+/// evidence is whether git still lists the entry.
 fn removal_target_still_present(repo: &Repository, result: &RemovalPlan) -> bool {
     match result {
         RemovalPlan::Worktree { worktree_path, .. } => worktree_path.exists(),
+        RemovalPlan::BranchOnly {
+            prune_entry: Some(entry),
+            ..
+        } if !removal_will_remove_target(result) => repo.registration_at(entry).is_ok(),
         RemovalPlan::BranchOnly { branch_name, .. } => {
             repo.branch(branch_name).exists_locally().unwrap_or(false)
         }
     }
+}
+
+/// For a stale worktree row — a `BranchOnly` plan that carries a registration
+/// to prune — whose branch the removal keeps: `Some(Some(branch))` when the row
+/// should morph into that branch's row, `Some(None)` when it should drop
+/// because no branch row would be shown for it (the branch is unborn, so has no
+/// ref, or a live sibling worktree's row already shows it). `None` for every
+/// other plan.
+///
+/// The keep reasons mirror `prepare_worktree_removal`'s: a shared or unborn
+/// branch gets `Keep` mode; otherwise the branch is unmerged.
+fn stale_entry_keeps_branch(repo: &Repository, result: &RemovalPlan) -> Option<Option<String>> {
+    let RemovalPlan::BranchOnly {
+        branch_name,
+        prune_entry: Some(_),
+        branch_checked_out_at,
+        ..
+    } = result
+    else {
+        return None;
+    };
+    if removal_will_remove_target(result) {
+        return None;
+    }
+    let shows_branch_row = branch_checked_out_at.is_none()
+        && repo.branch(branch_name).exists_locally().unwrap_or(false);
+    Some(shows_branch_row.then(|| branch_name.clone()))
 }
 
 /// Stash the canonical "retained; unmerged" info + hint pair (deduped), drained
@@ -2621,7 +2685,7 @@ pub mod tests {
     use insta::assert_yaml_snapshot;
     use skim::prelude::SkimItem;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
     use worktrunk::config::{Approvals, CommitGenerationConfig};
@@ -4391,6 +4455,143 @@ pub mod tests {
         // (nothing to keep).
         await_branch_presence(&repo, "feature", false);
         assert!(!reported_path.exists(), "the worktree is removed");
+    }
+
+    /// Whether git still lists a stale (prunable) worktree entry.
+    fn stale_entry_listed(repo: &worktrunk::git::Repository) -> bool {
+        repo.run_command(&["worktree", "list", "--porcelain"])
+            .map_or(true, |list| list.contains("prunable"))
+    }
+
+    /// The git-reported path of `branch`'s first worktree (macOS resolves the
+    /// `/var`→`/private/var` symlink, which `prepare_removal`'s lookup matches).
+    fn reported_worktree_path(repo: &worktrunk::git::Repository, branch: &str) -> PathBuf {
+        repo.list_worktrees()
+            .unwrap()
+            .iter()
+            .find(|wt| wt.branch.as_deref() == Some(branch))
+            .map(|wt| wt.path.clone())
+            .expect("worktree is listed")
+    }
+
+    /// alt-x on a worktree row whose directory was deleted outside `wt`, with an
+    /// unmerged branch: the stale registration is unregistered (as `wt remove`
+    /// does) and the row morphs into the kept branch's row — not kept as an
+    /// "unmerged" branch row with its registration left in place.
+    #[test]
+    fn test_apply_prunes_stale_worktree_with_unmerged_branch() {
+        use std::sync::atomic::Ordering;
+
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = worktrunk::testing::tempdir().unwrap();
+        let wt_path = wt_dir.path().join("feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            wt_path.to_str().unwrap(),
+        ])
+        .unwrap();
+        fs::write(wt_path.join("new.txt"), "unmerged work").unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["add", "."])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        worktrunk::shell_exec::Cmd::new("git")
+            .args(["commit", "-m", "unmerged work"])
+            .current_dir(&wt_path)
+            .run()
+            .unwrap();
+        let reported_path = reported_worktree_path(&repo, "feature");
+        fs::remove_dir_all(&wt_path).unwrap();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let items = Arc::new(Mutex::new(Vec::new()));
+        let remover = test_remover(Arc::clone(&items), repo.clone());
+        let (render_tx, _render_rx) = tokio::sync::mpsc::channel(8);
+        remover.render_tx.set(render_tx).unwrap();
+        let (row, token, _, morphed) = setup_morphable_row(&remover, "feature", &reported_path);
+        items.lock().unwrap().push(Arc::clone(&row));
+
+        assert!(matches!(remover.apply(token), RemovalEffect::Morphed));
+        assert!(
+            morphed.load(Ordering::Relaxed),
+            "the stale worktree row becomes the kept branch's row"
+        );
+        worktrunk::testing::wait_for("the stale entry to be unregistered", || {
+            !stale_entry_listed(&repo)
+        });
+        await_branch_presence(&repo, "feature", true);
+        worktrunk::testing::wait_for("the success flash", || {
+            remover
+                .header_flash
+                .current()
+                .is_some_and(|message| message.contains("kept branch"))
+        });
+        assert!(
+            morphed.load(Ordering::Relaxed),
+            "a successful prune leaves the row morphed"
+        );
+        assert_eq!(items.lock().unwrap().len(), 1);
+    }
+
+    /// alt-x on a stale worktree row whose branch is checked out in a live
+    /// sibling: the registration is unregistered and the row drops, since the
+    /// sibling's row already shows the branch. Before, the row stayed with a
+    /// false "branch is unmerged" flash and the registration survived.
+    #[test]
+    fn test_apply_prunes_stale_worktree_sharing_branch_with_sibling() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+        let wt_dir = worktrunk::testing::tempdir().unwrap();
+        let stale_path = wt_dir.path().join("stale");
+        let sibling_path = wt_dir.path().join("sibling");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "-b",
+            "feature",
+            stale_path.to_str().unwrap(),
+        ])
+        .unwrap();
+        let reported_path = reported_worktree_path(&repo, "feature");
+        repo.run_command(&[
+            "worktree",
+            "add",
+            "--force",
+            sibling_path.to_str().unwrap(),
+            "feature",
+        ])
+        .unwrap();
+        fs::remove_dir_all(&stale_path).unwrap();
+        let repo = worktrunk::git::Repository::at(test.path()).unwrap();
+
+        let item = branched_picker_item("feature", &reported_path);
+        let token = item.output().to_string();
+        let items = Arc::new(Mutex::new(vec![Arc::clone(&item)]));
+        let remover = test_remover(Arc::clone(&items), repo.clone());
+
+        assert!(matches!(remover.apply(token), RemovalEffect::Dropped));
+        assert!(items.lock().unwrap().is_empty(), "the stale row drops");
+        assert!(
+            remover
+                .header_flash
+                .current()
+                .is_none_or(|message| !message.contains("unmerged")),
+            "no false unmerged explanation"
+        );
+        worktrunk::testing::wait_for("the stale entry to be unregistered", || {
+            !stale_entry_listed(&repo)
+        });
+        assert!(sibling_path.is_dir(), "the sibling checkout stays");
+        await_branch_presence(&repo, "feature", true);
+        assert!(
+            items.lock().unwrap().is_empty(),
+            "a successful prune does not restore the row"
+        );
     }
 
     /// `worktree_removal_keeps_branch` predicts the morph: a `Worktree`
