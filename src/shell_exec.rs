@@ -763,7 +763,8 @@ pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::pa
 ///   one repository, and every worktree-scoped answer routes through
 ///   [`crate::git::WorkingTree`], which scrubs.
 ///   **Worktree-local** plumbing — [`crate::git::WorkingTree::run_command`],
-///   `TempIndex::command`, `list_ignored_entries` — relocates git into a
+///   `TempIndex::command`, `WorkingTree`'s prepared diffs,
+///   `list_ignored_entries` — relocates git into a
 ///   worktree `wt` resolved, so it scrubs, the same way hooks and `for-each`
 ///   do. Otherwise a `!wt` alias from a linked worktree (`GIT_DIR` pinned to
 ///   that worktree's private gitdir) makes `status` / `read-tree` on a
