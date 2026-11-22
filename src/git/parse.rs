@@ -189,35 +189,12 @@ pub fn parse_porcelain_z(output: &[u8]) -> Vec<Vec<u8>> {
     files
 }
 
-/// Parse untracked files from `git status --porcelain -z` output.
-///
-/// Format: "XY path\0" where XY is the status code and path follows a space.
-/// Untracked files have status "??".
+/// Untracked paths (`??` records) from `git status --porcelain -z` output.
 pub fn parse_untracked_files(status_output: &str) -> Vec<String> {
-    let mut files = Vec::new();
-    let mut entries = status_output.split('\0').filter(|s| !s.is_empty());
-
-    while let Some(entry) = entries.next() {
-        // Format: "XY PATH" where XY is 2 status chars, space, then path
-        if entry.len() < 3 {
-            continue;
-        }
-
-        let status = &entry[0..2];
-        let path = &entry[3..];
-
-        // Only collect untracked files
-        if status == "??" {
-            files.push(path.to_string());
-        }
-
-        // Skip old path for renames/copies (we don't care about them here)
-        if status.contains(['R', 'C']) {
-            entries.next();
-        }
-    }
-
-    files
+    porcelain_entries_z(status_output.as_bytes())
+        .filter(|entry| entry.starts_with(b"??"))
+        .map(|entry| String::from_utf8_lossy(&entry[3..]).into_owned())
+        .collect()
 }
 
 #[cfg(test)]
