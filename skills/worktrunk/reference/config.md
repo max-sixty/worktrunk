@@ -169,7 +169,7 @@ command = "llm -m claude-haiku-4.5"
 
 ```toml
 [commit.generation]
-command = "aichat -m claude:claude-haiku-4.5 --code"
+command = "aichat -m claude:claude-haiku-5-5 --code"
 ```
 
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.

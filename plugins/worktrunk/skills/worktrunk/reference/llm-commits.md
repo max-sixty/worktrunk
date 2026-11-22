@@ -40,7 +40,7 @@ command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 command = "llm -m claude-haiku-4.5"
 
 # aichat
-command = "aichat -m claude:claude-haiku-4.5 --code"
+command = "aichat -m claude:claude-haiku-5-5 --code"
 ```
 
 ## Usage
