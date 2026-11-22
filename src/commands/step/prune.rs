@@ -513,6 +513,18 @@ fn check_one(
         Some(wt) => matches!(repo.stale_worktree_work(&wt.path), Ok(None)),
         None => plan.is_some(),
     };
+    // A process whose working directory is inside the checkout means someone is
+    // using it (an agent, a dev server, a terminal). Like uncommitted changes,
+    // that is a reason to leave it, silently. The current worktree is exempt:
+    // the shell running prune sits there by definition.
+    #[cfg(unix)]
+    let removable = removable
+        && !matches!(
+            &item.source,
+            CheckSource::Linked { wt_idx }
+                if worktrees[*wt_idx].path != current_path
+                    && !worktrunk::git::reap::processes_under(&worktrees[*wt_idx].path).is_empty()
+        );
     let deletes_branch = plan.as_ref().is_some_and(RemovalPlan::deletes_branch);
     let age = if min_age_duration > Duration::ZERO {
         match &item.source {
