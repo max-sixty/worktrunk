@@ -69,5 +69,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 7 worktrees, 3 with changes, 5 ahead
-↳ ^ main worktree  | in sync with remote  ↑ ahead of default  ? untracked files  – dirty at default commit  ! unstaged changes[0m
+[2m○[22m [2mShowing 7 worktrees, 3 with changes, 5 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default  ? untracked files  – dirty at default commit  ! unstaged changes)[0m

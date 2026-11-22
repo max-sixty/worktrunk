@@ -68,8 +68,7 @@ exit_code: 0
 ----- stderr -----
 [33m▲[39m [33mCommit [1m0000000000000000000000000000000000000001[22m not found in repository; its rows show no commit details[39m
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead
-↳ ^ main worktree  ↑ ahead of default[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead  (^ main worktree  ↑ ahead of default)[0m
 [33m▲[39m [33m10 tasks failed:
 [107m [0m [1mmain[22m: upstream status (fatal: missing object 0000000000000000000000000000000000000001 for refs/heads/feature)
 [107m [0m [1mfeature-a[22m: upstream status (fatal: missing object 0000000000000000000000000000000000000001 for refs/heads/feature)

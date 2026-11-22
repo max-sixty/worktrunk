@@ -54,5 +54,4 @@ exit_code: 0
 
 ----- stderr -----
 
-○ Showing 1 worktree
-↳ ^ main worktree
+○ Showing 1 worktree  (^ main worktree)

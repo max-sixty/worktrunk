@@ -66,5 +66,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
-↳ ^ main worktree  ⇡ ahead of remote  ↑ ahead of default  ? untracked files[0m
+[2m○[22m [2mShowing 4 worktrees, 2 with changes, 2 ahead, hidden: Path  (^ main worktree  ⇡ ahead of remote)[0m

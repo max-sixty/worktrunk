@@ -71,5 +71,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 8 worktrees, 7 ahead
-↳ ↕ diverged from default  ↑ ahead of default  ^ main worktree  ⇡ ahead of remote[0m
+[2m○[22m [2mShowing 8 worktrees, 7 ahead  (↕ diverged from default  ↑ ahead of default  ^ main worktree  ⇡ ahead of remote)[0m

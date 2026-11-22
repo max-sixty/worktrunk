@@ -75,5 +75,4 @@ exit_code: 0
 [107m [0m   |        ^
 [107m [0m key with no value, expected `=`
 
-[2m○[22m [2mShowing 4 worktrees, 1 branch, 3 ahead
-↳ ^ main worktree  | in sync with remote  ↑ ahead of default  / branch without worktree  _ clean at default commit[0m
+[2m○[22m [2mShowing 4 worktrees, 1 branch, 3 ahead  (^ main worktree  | in sync with remote  ↑ ahead of default  / branch without worktree  _ clean at default commit)[0m

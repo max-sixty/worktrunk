@@ -68,5 +68,4 @@ exit_code: 0
 ----- stderr -----
 
 [2m○[22m [2mShowing 5 worktrees, 1 with changes, 3 ahead, hidden: ^↕,
-  ^…±, Remote⇅, Path, Commit, Age, Message
-↳ ^ main worktree  | in sync with remote  ↑ ahead of default[0m
+  ^…±, Remote⇅, Path, Commit, Age, Message[0m

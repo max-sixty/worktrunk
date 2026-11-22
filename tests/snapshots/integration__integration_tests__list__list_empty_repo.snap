@@ -61,5 +61,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 1 worktree
-↳ ^ main worktree[0m
+[2m○[22m [2mShowing 1 worktree  (^ main worktree)[0m

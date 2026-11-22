@@ -355,9 +355,14 @@ pub(crate) type ShownExplanations = std::collections::BTreeSet<String>;
 /// does not hold the current cycle open at this width.
 fn status_legend(
     items: &[ListItem],
-    mut remaining: usize,
+    available: usize,
     shown: &mut ShownExplanations,
 ) -> Vec<String> {
+    // The inline legend opens with two spaces and an opening parenthesis,
+    // and ends with a closing parenthesis.
+    let Some(mut remaining) = available.checked_sub("  ()".len()) else {
+        return Vec::new();
+    };
     let mut visible = std::collections::HashSet::new();
     let mut eligible: Vec<_> = items
         .iter()
@@ -396,8 +401,8 @@ fn status_legend(
 ///
 /// `max_width` bounds the line, following [`format_with_gutter`]'s
 /// convention. An undetectable width wraps nothing and omits the legend.
-/// Long summaries wrap, with continuations aligned under the text. The
-/// explanations use the width of their own line.
+/// Long summaries wrap, with continuations aligned under the text.
+/// Explanations appear inline only when the summary fits on one line.
 ///
 /// [`format_with_gutter`]: worktrunk::styling::format_with_gutter
 pub(crate) fn format_summary_message(
@@ -409,7 +414,6 @@ pub(crate) fn format_summary_message(
     max_width: Option<usize>,
 ) -> String {
     const INDENT: &str = "  "; // symbol + space, so continuations align under the text
-    const LEGEND_PREFIX: &str = "↳ ";
 
     let metrics = SummaryMetrics::from_items(items);
     let dim = Style::new().dimmed();
@@ -435,13 +439,14 @@ pub(crate) fn format_summary_message(
     .collect::<Vec<_>>()
     .join(&format!("\n{INDENT}"));
 
-    if let (Some(shown), Some(width)) = (shown, max_width) {
-        let budget = width.saturating_sub(visual_width(LEGEND_PREFIX));
-        let legend = status_legend(items, budget, shown);
+    if let Some(shown) = shown
+        && !body.contains('\n')
+        && let Some(remaining) =
+            max_width.and_then(|w| w.checked_sub(INDENT.len() + visual_width(&body)))
+    {
+        let legend = status_legend(items, remaining, shown);
         if !legend.is_empty() {
-            body.push('\n');
-            body.push_str(LEGEND_PREFIX);
-            body.push_str(&legend.join("  "));
+            body.push_str(&format!("  ({})", legend.join("  ")));
         }
     }
     format!("{INFO_SYMBOL} {dim}{body}{dim:#}")
@@ -634,21 +639,17 @@ mod tests {
             .into_owned()
         };
         let summary = "○ Showing 0 worktrees, 2 branches, hidden: Path; 1 task timed out";
-        let one = "↳ ✗ would conflict";
-        let both = "↳ ✗ would conflict  ⇡ ahead of remote";
+        let one = format!("{summary}  (✗ would conflict)");
+        let both = format!("{summary}  (✗ would conflict  ⇡ ahead of remote)");
         assert_eq!(render(None, true), summary);
         assert_eq!(render(Some(200), false), summary);
-        for (width, legend) in [
-            (visual_width(both), both),
-            (visual_width(both) - 1, one),
-            (visual_width(one), one),
-        ] {
-            let wrapped = render(Some(width), false);
-            assert!(wrapped.contains('\n'));
-            assert_eq!(render(Some(width), true), format!("{wrapped}\n{legend}"));
-        }
-        let narrower = visual_width(one) - 1;
-        assert_eq!(render(Some(narrower), true), render(Some(narrower), false));
+        assert_eq!(render(Some(visual_width(&both)), true), both);
+        assert_eq!(render(Some(visual_width(&both) - 1), true), one);
+        assert_eq!(render(Some(visual_width(&one)), true), one);
+        assert_eq!(render(Some(visual_width(&one) - 1), true), summary);
+        let wrapped = render(Some(30), false);
+        assert!(wrapped.contains('\n'));
+        assert_eq!(render(Some(30), true), wrapped);
     }
 
     #[test]
@@ -660,8 +661,7 @@ mod tests {
         item.status_symbols.operation_state = Some(OperationState::None);
         item.status_symbols.worktree_state = Some(WorktreeState::DuplicateBranch);
         item.status_symbols.main_state = Some(MainState::Ahead);
-        let legend = "↳ ↑ ahead of default";
-        let width = Some(visual_width(legend));
+        let expected = "○ Showing 0 worktrees  (↑ ahead of default)";
         assert_eq!(
             format_summary_message(
                 &[item],
@@ -669,13 +669,10 @@ mod tests {
                 &[],
                 0,
                 Some(&mut ShownExplanations::new()),
-                width
+                Some(visual_width(expected))
             )
             .ansi_strip(),
-            format!(
-                "{}\n{legend}",
-                format_summary_message(&[], false, &[], 0, None, width).ansi_strip()
-            )
+            expected
         );
     }
 
@@ -697,7 +694,7 @@ mod tests {
         let pairs = items
             .each_ref()
             .map(|item| item.status_symbols.explanations().next().unwrap().1);
-        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap();
+        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap() + 4;
         let mut shown = ShownExplanations::new();
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
         assert_eq!(status_legend(&items, width, &mut shown), [pairs[2].clone()]);
