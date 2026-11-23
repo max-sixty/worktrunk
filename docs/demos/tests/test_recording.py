@@ -99,7 +99,7 @@ def test_docs_demos_open_on_a_complete_command_before_execution() -> None:
         assert lines[show - 1] == f'Type "{expected_command}"', tape_file
         assert lines[show + 1 : show + 3] == ["Sleep 300ms", "Enter"], tape_file
 
-        if tape_file not in build["TUI_DEMOS"]:
+        if tape_file.removesuffix(".tape") not in build["TUI_DEMOS"]:
             commands = extract_commands_from_tape(tape, REPO_ROOT)
             assert commands[0] == expected_command, tape_file
             assert "wt switch b" not in commands, tape_file
