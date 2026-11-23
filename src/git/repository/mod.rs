@@ -1854,8 +1854,14 @@ impl Repository {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         // The one production git spawn that bypasses `Cmd` (see the daemon
-        // rationale above), so it re-applies the test floor by hand.
+        // rationale above), so it re-applies `Cmd`'s setup by hand, in
+        // `Cmd`'s order: the hermetic test floor, the git-discovery scrub
+        // (`path` is a `wt`-chosen worktree, and an inherited `GIT_DIR` would
+        // make its daemon bind the invoking worktree's socket), and the
+        // directive scrub. The discovery scrub removes every var `Cmd`
+        // would absolutize, so that step needs no counterpart here.
         crate::shell_exec::apply_hermetic_test_env(&mut cmd);
+        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
         crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Wait without captured
