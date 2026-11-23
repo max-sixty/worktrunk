@@ -149,7 +149,7 @@ test('build preserves the public route contract', async () => {
     homepage,
     /<div\b[^>]*class="wt-home"[^>]*>[\s\S]*?<p>Worktrunk is a CLI for Git worktree management, designed for <strong>parallel AI agent\s+workflows<\/strong>\.<\/p>/,
   );
-  assert.match(homepage, /<button\b[^>]*popovertarget="starlight__sidebar"[^>]*class="[^"]*\bsl-menu-button\b[^"]*"[^>]*>[\s\S]*?<span class="sr-only[^"]*">Menu<\/span><\/button>/);
+  assert.match(homepage, /<button\b[^>]*popovertarget="starlight__sidebar"[^>]*class="[^"]*\bsl-menu-button\b[^"]*"[^>]*>[\s\S]*?<span class="sr-only[^"]*"[^>]*>Menu<\/span><\/button>/);
   assert.match(homepage, /<sl-sidebar-pane\b[^>]*\bpopover\b[^>]*id="starlight__sidebar"[^>]*class="sidebar-pane\b/);
   assert.match(homepage, /<a\b[^>]*href="\/switch\/"[^>]*><span\b[^>]*>wt switch<\/span><\/a>/);
   assert.match(homepage, /<a\b[^>]*href="\/faq\/"[^>]*><span\b[^>]*>FAQ<\/span><\/a>/);
