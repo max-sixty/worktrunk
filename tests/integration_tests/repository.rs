@@ -1507,3 +1507,25 @@ fn test_branch_diff_stats_scoped_to_sparse_checkout() {
     assert_eq!(full_stats.added, 4, "full: inside/ + outside/ additions");
     assert_eq!(full_stats.deleted, 2, "full: inside/ + outside/ deletions");
 }
+
+/// The `primary_remote()` fallback skips a remote whose only `url` is empty,
+/// matching `remote_url()` and `all_remote_urls()`, so the primary remote
+/// always has a URL to report.
+#[test]
+fn test_primary_remote_skips_remote_with_empty_url() {
+    let repo = TestRepo::new();
+    repo.run_git(&["config", "remote.blank.url", ""]);
+    repo.run_git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/max-sixty/worktrunk.git",
+    ]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(r.primary_remote().unwrap(), "origin");
+    assert_eq!(
+        r.primary_remote_url().as_deref(),
+        Some("https://github.com/max-sixty/worktrunk.git")
+    );
+}

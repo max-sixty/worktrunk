@@ -89,18 +89,15 @@ impl Repository {
             }
         }
 
-        // Fall back to first remote with a configured URL. Filters out
+        // Fall back to the first remote with a non-empty URL. Filters out
         // phantom remotes from global config (e.g., `remote.origin.prunetags
-        // = true` without a URL) by requiring a `remote.<NAME>.url` entry.
-        let guard = self.all_config()?.read().unwrap();
-        let first_remote = guard.keys().find_map(|k| {
-            let rest = k.strip_prefix("remote.")?;
-            // `.url` suffix identifies url entries. Remote names can contain
-            // dots (e.g., "my.remote"), so rsplit from the right: the last
-            // `.url` is always the suffix.
-            let name = rest.strip_suffix(".url")?;
-            Some(name.to_string())
-        });
+        // = true` without a URL) and remotes whose `url` is empty, so the
+        // chosen remote always has a `remote_url`.
+        let first_remote = self
+            .all_remote_urls()
+            .into_iter()
+            .next()
+            .map(|(name, _)| name);
         first_remote.ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
