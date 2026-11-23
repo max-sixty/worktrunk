@@ -373,7 +373,7 @@ open = { version = "5.3", optional = true }
 # Unix-only syscall crates: `nix` backs process waits and pipe readiness;
 # `signal-hook` observes native job interrupts and relays PID-targeted TERM.
 # Gating keeps both out of the Windows dependency graph.
-nix = { version = "0.31.3", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
+nix = { version = "0.32.0", default-features = false, features = ["event", "fs", "poll", "process", "signal"] }
 signal-hook = "0.4.1"
 # Safe FIONREAD snapshots bound cancellation drains even with continuous writers;
 # directory-relative `*at` calls let tree removal never follow a symlink.
