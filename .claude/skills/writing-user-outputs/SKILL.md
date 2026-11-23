@@ -276,10 +276,12 @@ Use the appropriate helper function:
 
 ```rust
 // Pre-hooks: user is at cwd, no cd happens
-run_hook_with_filter(..., crate::output::pre_hook_display_path(ctx.worktree_path))?;
+execute_planned_hook(&plan, anchor, &ctx, HookType::PreMerge, &extra_vars,
+    FailureStrategy::FailFast, crate::output::pre_hook_display_path(ctx.worktree_path))?;
 
 // Post-hooks: user will cd to destination if shell integration active
-ctx.spawn_post_create_commands(crate::output::post_hook_display_path(&destination))?;
+register_planned(&mut announcer, &plan, anchor, &ctx, HookType::PostSwitch, &extra_vars,
+    crate::output::post_hook_display_path(&destination))?;
 ```
 
 **Avoid pronouns with cross-message referents:** Hints appear as separate
