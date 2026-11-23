@@ -15,6 +15,8 @@
 //! - `diff.rs` - Diff, history, and commit operations
 //! - `config.rs` - Git config, hints, markers, and default branch detection
 //! - `integration.rs` - Integration detection (same commit, ancestor, trees match)
+//! - `ref_snapshot.rs` - `RefSnapshot`, a captured point-in-time view of ref state
+//! - `sha_cache.rs` - Persistent cache for SHA-keyed git command results
 //!
 //! # Caching
 //!
@@ -196,9 +198,6 @@ pub use worktrees::{StaleWorktreeWork, duplicated_branches};
 /// [`GIT_COMMON_DIR_CACHE`]. Same staleness contract — populated once, never
 /// invalidated — but they survive across `Repository::current()` calls so a
 /// single eager [`Repository::prewarm`] in `main` warms every later instance.
-///
-/// Wrapped in Arc to allow releasing the outer HashMap lock before accessing
-/// cached values, avoiding deadlocks when cached methods call each other.
 ///
 /// # Cache access patterns
 ///
@@ -2083,7 +2082,7 @@ impl Repository {
     }
 
     /// Delay before showing progress output for slow operations.
-    /// See .claude/rules/cli-output-formatting.md: "Progress messages apply only to slow operations (>400ms)"
+    /// See `.claude/skills/writing-user-outputs/SKILL.md`: "Progress messages apply only to slow operations (>400ms)"
     pub const SLOW_OPERATION_DELAY_MS: i64 = 400;
 
     /// Run a git command with delayed output streaming.

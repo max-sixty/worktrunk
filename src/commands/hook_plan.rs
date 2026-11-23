@@ -37,8 +37,9 @@
 //! [`Approvals`] stores and the prompt shows.
 //!
 //! `ApprovedHookPlan` is obtainable *only* via [`HookPlan::approve`] (the
-//! interactive / `--yes` gate) or `HookPlan::approve_readonly` (the picker,
-//! which can't prompt mid-render; `#[cfg(unix)]`). [`HookPlanBuilder::add`] — the sole
+//! interactive / `--yes` gate) or `HookPlan::approve_readonly` (the picker and
+//! `wt step prune`, which run only already-approved commands rather than
+//! prompt). [`HookPlanBuilder::add`] — the sole
 //! config→commands step for the covered hooks — is the only place
 //! `load_project_config()`'s result is selected from.
 
@@ -88,8 +89,8 @@ pub struct HookPlan {
 /// config.
 ///
 /// `add` is the only place `load_project_config()`'s result feeds command
-/// selection for the covered hook types — `pub(crate)` and called only from
-/// command gates.
+/// selection for the covered hook types, and it is called only from command
+/// gates.
 pub struct HookPlanBuilder<'a> {
     entries: Vec<PlanEntry>,
     project_config: Option<&'a ProjectConfig>,
@@ -361,8 +362,7 @@ impl ApprovedHookPlan {
 /// signature carries no config — only the plan, the render context, and the
 /// failure strategy.
 ///
-/// `anchor` is the worktree the hook runs in (usually `ctx.worktree_path`, but
-/// for `post-remove` the removed worktree while `ctx` runs in the destination).
+/// `anchor` is the worktree the hook runs in (usually `ctx.worktree_path`).
 /// It is *not* a config handle — just the lookup key into the frozen plan. The
 /// gate always selects from the invoking worktree's config, which need not be
 /// the anchor.

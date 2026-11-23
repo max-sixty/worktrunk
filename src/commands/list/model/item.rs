@@ -318,7 +318,7 @@ pub struct ListItem {
     pub status_symbols: StatusSymbols,
 
     /// Pre-formatted single-line representation for statusline tools.
-    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci` (2-space separators)
+    /// Format: `branch  status  @working  commits  ^branch_diff  upstream  ci  url` (2-space separators)
     ///
     /// Populated by [`finalize_display`](Self::finalize_display); read by
     /// `JsonItem` for the `statusline` field.

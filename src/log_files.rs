@@ -155,9 +155,8 @@ impl Drop for SinkWriter {
         // Single-locked write: a multi-line event (the body has
         // intermediate `\n`s) lands together in the file instead of
         // interleaving with another thread's lines between
-        // intermediates. Nothing in this codebase emits multi-line
-        // tracing events today, but the contract holds if anything
-        // ever does.
+        // intermediates. `shell_exec::log_output`'s redacted header for
+        // `sensitive_output` commands is one such event.
         let text = String::from_utf8_lossy(&self.buf);
         self.sink.write_event(&text);
     }
