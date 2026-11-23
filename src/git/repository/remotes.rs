@@ -67,6 +67,17 @@ use crate::config::ProjectId;
 use crate::git::error::RefType;
 use crate::git::{legacy_project_identifier, url_path_segments_eq};
 
+/// The remote name and URL of a bulk-config `remote.<name>.url` entry whose
+/// last value is non-empty, or `None` for any other key.
+///
+/// Remote names can contain dots (e.g., "my.remote"); the `.url` suffix is
+/// stripped from the right, so the last `.url` is always the suffix.
+fn remote_url_entry<'a>(key: &'a str, values: &'a [String]) -> Option<(&'a str, &'a str)> {
+    let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
+    let url = values.last()?.trim();
+    (!url.is_empty()).then_some((name, url))
+}
+
 impl Repository {
     /// Get the primary remote name for this repository.
     ///
@@ -89,18 +100,14 @@ impl Repository {
             }
         }
 
-        // Fall back to first remote with a configured URL. Filters out
+        // Fall back to the first remote with a non-empty URL. Filters out
         // phantom remotes from global config (e.g., `remote.origin.prunetags
-        // = true` without a URL) by requiring a `remote.<NAME>.url` entry.
+        // = true` without a URL) and remotes whose `url` is empty, so the
+        // chosen remote always has a `remote_url`.
         let guard = self.all_config()?.read().unwrap();
-        let first_remote = guard.keys().find_map(|k| {
-            let rest = k.strip_prefix("remote.")?;
-            // `.url` suffix identifies url entries. Remote names can contain
-            // dots (e.g., "my.remote"), so rsplit from the right: the last
-            // `.url` is always the suffix.
-            let name = rest.strip_suffix(".url")?;
-            Some(name.to_string())
-        });
+        let first_remote = guard
+            .iter()
+            .find_map(|(k, values)| remote_url_entry(k, values).map(|(name, _)| name.to_string()));
         first_remote.ok_or_else(|| anyhow::anyhow!("No remotes configured"))
     }
 
@@ -258,13 +265,7 @@ impl Repository {
         guard
             .iter()
             .filter_map(|(k, values)| {
-                let rest = k.strip_prefix("remote.")?;
-                let name = rest.strip_suffix(".url")?;
-                let url = values.last()?.trim();
-                if url.is_empty() {
-                    return None;
-                }
-                Some((name.to_string(), url.to_string()))
+                remote_url_entry(k, values).map(|(name, url)| (name.to_string(), url.to_string()))
             })
             .collect()
     }
