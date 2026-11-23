@@ -891,7 +891,7 @@ Move all mismatched worktrees:
 $ wt step relocate
 ```
 
-Auto-commit and clobber blockers (never fails):
+Auto-commit dirty worktrees and clobber non-worktree blockers:
 
 ```console
 $ wt step relocate --commit --clobber
@@ -932,6 +932,8 @@ refuses), unless `--commit` is passed.
 - **Dirty main worktree** (without `--commit`) — use `--commit` to auto-commit first
 - **Locked** — unlock with `git worktree unlock`
 - **Target blocked** (without `--clobber`) — use `--clobber` to backup blocker
+- **Target is a worktree outside this relocation** — relocate or remove that worktree first
+- **Unresolved conflicts** (with `--commit`) — resolve them first
 - **Detached HEAD** — no branch to compute expected path
 
 ### Command reference
