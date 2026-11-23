@@ -769,11 +769,11 @@ fn test_copy_ignored_cow_independence(mut repo: TestRepo) {
     fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
 
     // Copy to feature
-    repo.wt_command()
-        .args(["step", "copy-ignored"])
-        .current_dir(&feature_path)
-        .output()
-        .expect("copy-ignored should succeed");
+    run_copy_ignored(&repo, &feature_path);
+    assert_eq!(
+        fs::read_to_string(feature_path.join(".env")).unwrap(),
+        "original"
+    );
 
     // Modify the copy in feature
     fs::write(feature_path.join(".env"), "modified").unwrap();
