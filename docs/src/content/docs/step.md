@@ -903,7 +903,7 @@ Move all mismatched worktrees:
 $ wt step relocate
 ```
 
-Auto-commit and clobber blockers (never fails):
+Auto-commit dirty worktrees and clobber non-worktree blockers:
 
 ```console
 $ wt step relocate --commit --clobber
