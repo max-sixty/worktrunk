@@ -181,11 +181,12 @@ pub enum FailureStrategy {
 pub struct CommandContext<'a> {
     /// The repository, rooted at the worktree this operation acts on.
     ///
-    /// For hooks this field is load-bearing: `ctx.repo.load_project_config()` is
-    /// how a hook gets its `.config/wt.toml`, so whichever worktree `repo` is
-    /// rooted at decides which file is read. The per-hook mapping (and why each
-    /// construction site picks the root it does) is the spec in the
-    /// [`super::hooks`] module docs.
+    /// For invocation-resolved hooks (`pre-commit`, `post-commit`, `pre-switch`,
+    /// `wt hook`) this field is load-bearing: `ctx.repo.load_project_config()`
+    /// is how such a hook gets its `.config/wt.toml`, so whichever worktree
+    /// `repo` is rooted at decides which file is read. Plan-backed hooks carry
+    /// their commands in an `ApprovedHookPlan` and use `repo` only to render.
+    /// The per-hook mapping is the spec in the [`super::hooks`] module docs.
     pub repo: &'a Repository,
     pub config: &'a UserConfig,
     /// Current branch name, if on a branch (None in detached HEAD state).
@@ -410,10 +411,8 @@ pub fn build_hook_context(
 /// Drain a sequence of command results, returning the first error.
 ///
 /// All items are consumed before returning, so callers can be sure every
-/// spawned child or joined thread has completed even when one item already
-/// errored. Used by alias and pipeline concurrent groups, which both want
-/// "wait all, return first error" semantics around different concurrency
-/// primitives (in-process threads vs OS subprocesses).
+/// spawned child has been waited on even when one item already errored. Used
+/// by background pipelines' concurrent groups (`run_pipeline`).
 pub fn wait_first_error<E>(
     results: impl IntoIterator<Item = std::result::Result<(), E>>,
 ) -> std::result::Result<(), E> {
