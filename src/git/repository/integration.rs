@@ -874,15 +874,6 @@ impl Repository {
         branch: &str,
         target: &str,
     ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
-        self.compute_integration_reason_uncached(snapshot, branch, target)
-    }
-
-    fn compute_integration_reason_uncached(
-        &self,
-        snapshot: &RefSnapshot,
-        branch: &str,
-        target: &str,
-    ) -> anyhow::Result<(String, Option<IntegrationReason>)> {
         // Resolve upstream once. Errors and "no upstream" both collapse to None.
         let upstream = snapshot
             .upstream_of(target)
