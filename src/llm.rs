@@ -5,7 +5,9 @@ use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 use worktrunk::config::CommitGenerationConfig;
-use worktrunk::git::{CommandError, CommitMessageDetail, ErrorExt, TempIndex, WorkingTree};
+use worktrunk::git::{
+    CommandError, CommitMessageDetail, ErrorExt, Repository, TempIndex, WorkingTree,
+};
 use worktrunk::shell_exec::{Cmd, ShellConfig};
 
 use minijinja::Environment;
@@ -769,6 +771,17 @@ fn staged_diff<'a>(
     }
 }
 
+/// `{{ repo }}` in the commit and squash prompts: the repository directory's
+/// name, read the way hooks and the worktree-path template read it, so it is
+/// the same in every worktree rather than the current worktree's folder name.
+pub(crate) fn prompt_repo_name(repo: &Repository) -> anyhow::Result<&str> {
+    Ok(repo
+        .repo_path()?
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("repo"))
+}
+
 /// Build the commit prompt from staged changes.
 ///
 /// Gathers the staged diff, branch name, repo name, and recent commits, then renders
@@ -793,13 +806,8 @@ pub(crate) fn build_commit_prompt(
     // Prepare diff (may filter if too large)
     let prepared = prepare_diff(diff_output, diff_stat);
 
-    // Get the committed branch and its worktree root
     let current_branch = wt.branch()?.unwrap_or_else(|| "HEAD".to_string());
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let repo_name = prompt_repo_name(wt.repo())?;
 
     let recent_commits = wt.recent_commit_subjects(None, 5);
 

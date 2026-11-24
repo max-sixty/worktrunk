@@ -3913,6 +3913,70 @@ squash-template = """
     ));
 }
 
+/// `{{ repo }}` in the commit and squash prompts is the repository's name, as
+/// it is for hooks and the worktree-path template, not the name of whichever
+/// worktree the command runs in. The prompts used to read the current
+/// worktree's folder, so from a linked worktree at `repo.feature` they said
+/// `repo.feature` where a hook in the same worktree said `repo`.
+#[rstest]
+fn test_prompt_repo_names_the_repository_from_a_linked_worktree(mut repo: TestRepo) {
+    let feature_wt = repo.add_worktree("feature");
+    repo.commit_in_worktree(&feature_wt, "a.txt", "a\n", "Add a");
+    repo.commit_in_worktree(&feature_wt, "b.txt", "b\n", "Add b");
+    fs::write(feature_wt.join("staged.txt"), "staged\n").unwrap();
+    repo.git_command()
+        .args(["add", "staged.txt"])
+        .current_dir(&feature_wt)
+        .run()
+        .unwrap();
+
+    let repo_name = repo.root_path().file_name().unwrap().to_str().unwrap();
+    let worktree_name = feature_wt.file_name().unwrap().to_str().unwrap();
+    assert_ne!(repo_name, worktree_name);
+
+    // Captures live under `.git/`, which no diff `wt` builds ever reads.
+    let capture = repo.root_path().join(".git").join("squash-prompt");
+    let target = capture.to_slash_lossy().replace('\\', r"\\");
+    repo.write_test_config(&format!(
+        r#"
+[commit.generation]
+command = "cat > '{target}'; echo summary"
+template = "repo={{{{ repo }}}}"
+squash-template = "repo={{{{ repo }}}}"
+"#
+    ));
+
+    let expected = format!("repo={repo_name}");
+    for args in [
+        &["commit", "--show-prompt"][..],
+        &["squash", "--show-prompt"],
+        &["squash", "--dry-run", "--yes"],
+    ] {
+        let output = make_snapshot_cmd(&repo, "step", args, Some(&feature_wt))
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        let prompt = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            prompt.lines().any(|line| line == expected),
+            "{args:?}: {prompt}"
+        );
+    }
+
+    // A real squash renders the prompt in `handle_squash_in`, separately from
+    // the previews above.
+    let output = make_snapshot_cmd(
+        &repo,
+        "step",
+        &["squash", "--yes", "--no-hooks"],
+        Some(&feature_wt),
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(fs::read_to_string(&capture).unwrap().trim(), expected);
+}
+
 /// A custom squash template that references the retired `commits` variable
 /// still renders, even though the prompt renderer no longer supplies that name:
 /// the config-deprecation layer rewrites it to `commit_details` on load, warns

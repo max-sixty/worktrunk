@@ -295,12 +295,7 @@ pub fn handle_squash_in(
 
     generator.emit_hint_if_needed();
 
-    // Get current branch and repo name for template variables
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let repo_name = crate::llm::prompt_repo_name(repo)?;
 
     let commit_message = crate::llm::SquashInputs {
         worktree: &wt,
@@ -509,11 +504,7 @@ fn preview_squash(
     let range = format!("{}..HEAD", merge_base);
     let commit_details = repo.commit_message_details(&range)?;
 
-    let repo_root = wt.root()?;
-    let repo_name = repo_root
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("repo");
+    let repo_name = crate::llm::prompt_repo_name(repo)?;
 
     let ctx = env.context(yes);
     let project_append = resolve_template_for_preview(&ctx, &commit_config, dry_run)?;
