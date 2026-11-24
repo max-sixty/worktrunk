@@ -566,7 +566,7 @@ impl ColumnLayout {
                 if item.is_main() {
                     return StyledLine::new();
                 }
-                match item.branch_diff() {
+                match &item.branch_diff {
                     Some(bd) => self.render_diff_cell(bd.diff.added, bd.diff.deleted),
                     None => self.placeholder_cell(placeholder),
                 }

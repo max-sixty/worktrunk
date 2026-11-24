@@ -189,17 +189,10 @@ pub(super) fn detect_gitlab(
     // This requires a second glab call because mr list doesn't include head_pipeline.
     let mr_info = fetch_mr_details(mr_entry.iid, &repo_root);
 
-    // Determine CI status using priority: conflicts > running > pipeline status > no_ci
-    // Use mr_entry for basic info (available from list), mr_info for pipeline status
-    //
-    // Note: "ci_must_pass" is a policy constraint ("CI must pass to merge"), NOT a failure
-    // indicator. We let it fall through to the actual pipeline status.
-    let ci_status = if mr_entry.has_conflicts
-        || mr_entry.detailed_merge_status.as_deref() == Some("conflict")
-    {
-        CiStatus::Conflicts
-    } else if mr_entry.detailed_merge_status.as_deref() == Some("ci_still_running") {
-        CiStatus::Running
+    // Conflicts and a still-running merge pipeline are settled by the list
+    // entry; otherwise the pipeline status from `glab mr view` decides.
+    let ci_status = if let Some(status) = mr_entry.coarse_ci_status() {
+        status
     } else if let Some(ref info) = mr_info {
         info.ci_status()
     } else {
@@ -301,9 +294,9 @@ pub(super) fn detect_gitlab_pipeline(
 
 /// The `author` object nested in a `glab mr list` entry.
 #[derive(Debug, Default, Deserialize)]
-struct GitLabMrAuthor {
+pub(crate) struct GitLabMrAuthor {
     #[serde(default)]
-    username: String,
+    pub username: String,
 }
 
 /// Basic MR info from `glab mr list --output json`.
@@ -313,11 +306,20 @@ struct GitLabMrAuthor {
 ///
 /// We include `source_project_id` for client-side filtering by source project.
 /// See the `# Filtering Strategy` docs on [`detect_gitlab`] for why we filter by source, not by author.
+///
+/// The `--prs` picker parses the same payload by flattening this struct into
+/// its own entry, so both surfaces read CI and review state through
+/// [`coarse_ci_status`](Self::coarse_ci_status) and
+/// [`review_state`](Self::review_state).
 #[derive(Debug, Deserialize)]
-struct GitLabMrListEntry {
+pub(crate) struct GitLabMrListEntry {
     /// The internal MR ID (used to fetch full details via `glab mr view <iid>`)
     pub iid: u64,
+    /// Diff head SHA; absent reads as empty, which `wt list` treats as stale
+    /// and the picker as unknown.
+    #[serde(default)]
     pub sha: String,
+    #[serde(default)]
     pub has_conflicts: bool,
     pub detailed_merge_status: Option<String>,
     /// The source project ID (the project the MR's branch comes from).
@@ -343,6 +345,49 @@ struct GitLabMrListEntry {
 }
 
 impl GitLabMrListEntry {
+    /// The CI state the list entry settles without pipeline detail, or `None`
+    /// when only the pipeline status (from `glab mr view`) can say.
+    ///
+    /// Conflicts when GitLab flags `has_conflicts` or reports a
+    /// `detailed_merge_status` of `conflict` or `broken_status` ("can't merge
+    /// into the target branch due to a potential conflict"); conflicts outrank
+    /// `ci_still_running`. `ci_must_pass` is a merge policy, not a failure, so
+    /// it falls through to the pipeline status like any other value.
+    fn coarse_ci_status(&self) -> Option<CiStatus> {
+        if self.has_conflicts {
+            return Some(CiStatus::Conflicts);
+        }
+        match self.detailed_merge_status.as_deref() {
+            Some("conflict" | "broken_status") => Some(CiStatus::Conflicts),
+            Some("ci_still_running") => Some(CiStatus::Running),
+            _ => None,
+        }
+    }
+
+    /// Build a [`PrStatus`] from this open-MR entry alone, for the `--prs`
+    /// picker, which holds the whole open-MR list and makes no per-MR
+    /// `glab mr view` call. CI beyond [`coarse_ci_status`](Self::coarse_ci_status)
+    /// therefore reads as `NoCI`. MR rows have no local checkout to diff
+    /// against, so the result is never stale.
+    pub(crate) fn open_mr_status(&self) -> PrStatus {
+        PrStatus {
+            ci_status: self.coarse_ci_status().unwrap_or(CiStatus::NoCI),
+            source: CiSource::PullRequest,
+            is_stale: false,
+            is_priming: false,
+            url: self.web_url.clone(),
+            number: Some(PrRef::mr(self.iid)),
+            review_state: self.review_state(),
+            // The picker overlays title/body/author from its own entry, so
+            // they stay absent here.
+            title: None,
+            body: None,
+            author: None,
+            comment_count: None,
+            updated_at: None,
+        }
+    }
+
     /// Map draft + `detailed_merge_status` to a [`ReviewState`].
     ///
     /// GitLab has no changes-requested equivalent in MR list data; draft and
@@ -461,20 +506,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_mr_list_entry_review_state() {
-        let entry = |draft: Option<bool>, status: Option<&str>| GitLabMrListEntry {
-            iid: 1,
-            sha: "abc".into(),
-            has_conflicts: false,
-            author: None,
-            detailed_merge_status: status.map(Into::into),
-            source_project_id: None,
-            web_url: None,
-            draft,
-            title: None,
-            description: None,
-            user_notes_count: None,
-        };
+    fn test_mr_list_entry_coarse_ci_and_review_state() {
+        let mr =
+            |has_conflicts: bool, draft: Option<bool>, status: Option<&str>| GitLabMrListEntry {
+                iid: 1,
+                sha: "abc".into(),
+                has_conflicts,
+                author: None,
+                detailed_merge_status: status.map(Into::into),
+                source_project_id: None,
+                web_url: None,
+                draft,
+                title: None,
+                description: None,
+                user_notes_count: None,
+            };
+        let entry = |draft: Option<bool>, status: Option<&str>| mr(false, draft, status);
+
+        // Conflicts: `has_conflicts` outranks any other merge status, and
+        // `broken_status` (a potential conflict) counts like `conflict`.
+        let ci = |has_conflicts, status| mr(has_conflicts, None, status).coarse_ci_status();
+        assert_eq!(
+            ci(true, Some("ci_still_running")),
+            Some(CiStatus::Conflicts)
+        );
+        assert_eq!(ci(false, Some("conflict")), Some(CiStatus::Conflicts));
+        assert_eq!(ci(false, Some("broken_status")), Some(CiStatus::Conflicts));
+        assert_eq!(ci(false, Some("ci_still_running")), Some(CiStatus::Running));
+        // Anything else, the `ci_must_pass` policy included, leaves CI to the pipeline
+        assert_eq!(ci(false, Some("ci_must_pass")), None);
+        assert_eq!(ci(false, None), None);
 
         // Draft wins over the approval gap
         assert_eq!(

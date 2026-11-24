@@ -3439,7 +3439,7 @@ fn test_switch_prs_dry_run_github_comments_tab(repo: TestRepo) {
 }
 
 /// GitLab counterpart of [`test_switch_prs_dry_run_github`], covering the
-/// `fetch_gitlab` / `parse_gitlab_mrs` / `gitlab_mr_status` path via a mocked
+/// `fetch_gitlab` / `parse_gitlab_mrs` / `GitLabMrListEntry::open_mr_status` path via a mocked
 /// `glab mr list`.
 #[rstest]
 fn test_switch_prs_dry_run_gitlab(repo: TestRepo) {
