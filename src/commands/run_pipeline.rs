@@ -17,7 +17,7 @@
 //! ## Execution model
 //!
 //! Each command — whether serial or concurrent — gets its own shell process
-//! via [`ShellConfig`] (`sh` on Unix, Git Bash on Windows). Shell state
+//! via [`Cmd::shell`] (`sh` on Unix, Git Bash on Windows). Shell state
 //! (`cd`, `export`, environment) does not carry across steps.
 //!
 //! **Serial steps** run one at a time. If a step exits non-zero, the
@@ -69,7 +69,7 @@ use serde::{Deserialize, Serialize};
 
 use worktrunk::HookType;
 use worktrunk::git::{Repository, WorktrunkError};
-use worktrunk::shell_exec::{ShellConfig, scrub_git_discovery_env_vars};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::trace::CommandTrace;
 
 use super::command_executor::{
@@ -150,10 +150,9 @@ pub fn run_pipeline() -> anyhow::Result<()> {
 
 /// Spawn a shell command with its output redirected to a log file.
 ///
-/// Uses `ShellConfig` for portable shell detection (Git Bash on Windows,
-/// `sh` on Unix). stdout/stderr are redirected to `log_file` so each
-/// command gets its own log. Returns the `Child` so the caller controls
-/// when to wait.
+/// Runs through [`Cmd::shell`] (Git Bash on Windows, `sh` on Unix).
+/// stdout/stderr are redirected to `log_file` so each command gets its own
+/// log. Returns the `Child` so the caller controls when to wait.
 ///
 /// Stdin is closed: a detached step has no terminal, so a read returns EOF
 /// rather than blocking on one that isn't there.
@@ -162,23 +161,23 @@ fn spawn_shell_command(
     worktree_path: &Path,
     log_file: fs::File,
 ) -> anyhow::Result<(Child, CommandTrace)> {
-    let shell = ShellConfig::get()?;
     let log_err = log_file
         .try_clone()
         .context("failed to clone log file handle")?;
-    // Start the trace just before spawning; the caller resolves it once the
-    // child is waited on (see `wait_resolving`).
-    let mut trace = CommandTrace::new(None, expanded);
-    let mut command = shell.command(expanded);
-    command
-        .current_dir(worktree_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err));
     // Background hooks, like foreground ones, discover their repo from the
     // worktree cwd, not an inherited GIT_DIR/GIT_WORK_TREE (issue #3373). This
     // runner only ever executes hook pipelines, so the scrub is unconditional.
-    scrub_git_discovery_env_vars(&mut command);
+    let mut command = Cmd::shell(expanded)
+        .current_dir(worktree_path)
+        .scrub_git_discovery_env()
+        .into_command()?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_err));
+    // Start the trace just before spawning; the caller resolves it once the
+    // child is waited on (see `wait_resolving`).
+    let mut trace = CommandTrace::new(None, expanded);
     let child = match worktrunk::shell_exec::spawn(&mut command) {
         Ok(child) => child,
         Err(e) => {

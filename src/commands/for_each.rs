@@ -208,7 +208,7 @@ pub fn step_for_each(args: Vec<String>, format: crate::cli::SwitchFormat) -> any
 /// Git-discovery vars are scrubbed too: for-each relocates the user's
 /// command into each worktree, so its `git` calls must discover that
 /// worktree from the cwd, not resolve an inherited `GIT_DIR` pinned to
-/// wherever `wt` was invoked (see `scrub_git_discovery_env_vars`).
+/// wherever `wt` was invoked (see `Cmd::scrub_git_discovery_env`).
 ///
 /// Child stdout is merged onto stderr so it interleaves cleanly with
 /// for-each's decorated per-worktree headers and footers; the structured

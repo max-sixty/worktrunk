@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use worktrunk::shell_exec::Cmd;
 use worktrunk::trace::CommandTrace;
 
 /// How often the reaper re-checks whether the worktree still exists. Teardown
@@ -57,15 +58,12 @@ pub(crate) fn step_tether(command: &[String], working_dir: Option<&Path>) -> Res
     // subdirectory.
     let worktree = std::env::current_dir().ok();
 
-    let mut cmd = std::process::Command::new(&command[0]);
-    cmd.args(&command[1..]);
+    // Direct exec, no implicit shell, same as `wt step for-each`.
+    let mut cmd = Cmd::new(&command[0]).args(&command[1..]);
     if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+        cmd = cmd.current_dir(dir);
     }
-    // Direct exec, no implicit shell, same as `wt step for-each`; scrub the
-    // directive env vars so a long-lived child can't redirect the parent
-    // shell's directory.
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
+    let mut cmd = cmd.into_command()?;
     set_new_process_group(&mut cmd);
     // The supervised command is in a different process group, so terminal
     // Ctrl-C reaches this supervisor alone. Hold a foreground signal lease
@@ -201,12 +199,16 @@ fn kill_process_tree(pid: u32) {
     // No killable process group on Windows; `taskkill /T` terminates the
     // process and its child tree, `/F` forces. Best-effort: the pid may
     // already be gone (self-exit) or have left detached children.
-    let mut command = std::process::Command::new("taskkill");
-    command
+    let _ = Cmd::new("taskkill")
         .args(["/T", "/F", "/PID", &pid.to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let _ = worktrunk::shell_exec::spawn(&mut command).and_then(|mut child| child.wait());
+        .into_command()
+        .and_then(|mut command| {
+            command
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            worktrunk::shell_exec::spawn(&mut command)
+        })
+        .and_then(|mut child| child.wait());
 }
 
 #[cfg(test)]

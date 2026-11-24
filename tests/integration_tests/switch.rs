@@ -1096,7 +1096,7 @@ fn test_switch_internal_with_execute(repo: TestRepo) {
 /// resolves them before the cwd, so a forwarded value would misdirect the
 /// payload's `git` calls to the inherited repo while the "Executing @ …"
 /// header names the target (issue #3373; classification in
-/// `scrub_git_discovery_env_vars`).
+/// `Cmd::scrub_git_discovery_env`).
 ///
 /// The relative marker path resolves in the payload's cwd, pinning the
 /// relocation at the same time.

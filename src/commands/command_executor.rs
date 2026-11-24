@@ -941,7 +941,7 @@ mod tests {
             .path()
             .join("missing-cwd");
         let shell = worktrunk::shell_exec::ShellConfig::get().unwrap();
-        let error = worktrunk::shell_exec::Cmd::new(shell.executable.to_string_lossy())
+        let error = worktrunk::shell_exec::Cmd::new(&shell.executable)
             .current_dir(&missing)
             .run()
             .unwrap_err();

@@ -47,10 +47,7 @@ use worktrunk::git::ErrorExt;
 use worktrunk::git::WorktrunkError;
 #[cfg(unix)]
 use worktrunk::shell_exec::TerminalInterrupt;
-use worktrunk::shell_exec::{
-    ShellConfig, apply_cd_directive_env, scrub_directive_env_vars, scrub_git_discovery_env_vars,
-    wait_foreground_child,
-};
+use worktrunk::shell_exec::{Cmd, ShellConfig, wait_foreground_child};
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::styling::stderr;
@@ -499,26 +496,22 @@ fn spawn_child(
     cmd: &ConcurrentCommand<'_>,
     #[cfg(unix)] signals: &ForegroundSignals,
 ) -> anyhow::Result<SpawnedChild> {
-    // Siblings cannot share interactive stdin, but each retains native access
-    // to /dev/tty through the shell-established foreground group.
-    let mut command = shell.command(cmd.expanded);
-    command
-        .current_dir(cmd.working_dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
+    let mut builder = Cmd::shell(cmd.expanded).current_dir(cmd.working_dir);
     // User hooks discover their repo from the cwd wt sets, not an inherited
     // GIT_DIR/GIT_WORK_TREE (issue #3373). Aliases keep the inherited context.
     if cmd.scrub_git_discovery {
-        scrub_git_discovery_env_vars(&mut command);
+        builder = builder.scrub_git_discovery_env();
     }
-
-    // Scrub all directive env vars, then re-add the CD passthrough.
-    scrub_directive_env_vars(&mut command);
     if let Some(path) = &cmd.directives.cd_file {
-        apply_cd_directive_env(&mut command, path);
+        builder = builder.directive_cd_file(path);
     }
+    let mut command = builder.into_command()?;
+    // Siblings cannot share interactive stdin, but each retains native access
+    // to /dev/tty through the shell-established foreground group.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     tracing::debug!(
         command = %cmd.expanded,

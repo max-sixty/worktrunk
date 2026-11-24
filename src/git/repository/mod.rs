@@ -1847,27 +1847,24 @@ impl Repository {
         let context = path_to_logging_context(path);
         let cmd_str = "git fsmonitor--daemon start";
         tracing::debug!(cmd = cmd_str, context = %context, "$ {cmd_str} [{context}]");
-        let mut cmd = std::process::Command::new("git");
-        cmd.args(["fsmonitor--daemon", "start"])
-            .current_dir(path)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        // The one production git spawn that bypasses `Cmd` (see the daemon
-        // rationale above), so it re-applies `Cmd`'s setup by hand, in
-        // `Cmd`'s order: the hermetic test floor, the git-discovery scrub
-        // (`path` is a `wt`-chosen worktree, and an inherited `GIT_DIR` would
-        // make its daemon bind the invoking worktree's socket), and the
-        // directive scrub. The discovery scrub removes every var `Cmd`
-        // would absolutize, so that step needs no counterpart here.
-        crate::shell_exec::apply_hermetic_test_env(&mut cmd);
-        crate::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
-        crate::shell_exec::scrub_directive_env_vars(&mut cmd);
         // Trace the daemon launch so it's attributed in the timeline rather than
         // appearing as a gap on the switch hot path. Wait without captured
         // pipes (unlike `Cmd::run`) — see the daemon rationale above.
         let mut trace = crate::trace::CommandTrace::new(Some(&context), cmd_str);
-        let result = crate::shell_exec::spawn(&mut cmd).and_then(|mut child| child.wait());
+        // `path` is a `wt`-chosen worktree: an inherited `GIT_DIR` would make
+        // its daemon bind the invoking worktree's socket.
+        let result = Cmd::new("git")
+            .args(["fsmonitor--daemon", "start"])
+            .current_dir(path)
+            .scrub_git_discovery_env()
+            .into_command()
+            .and_then(|mut cmd| {
+                cmd.stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                crate::shell_exec::spawn(&mut cmd)
+            })
+            .and_then(|mut child| child.wait());
         match result {
             Ok(status) => {
                 trace.complete(status.success());

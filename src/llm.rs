@@ -517,7 +517,7 @@ pub(crate) fn execute_llm_command(command: &str, prompt: &str) -> anyhow::Result
         .map(String::as_str)
         .chain([command])
         .collect();
-    let output = Cmd::new(shell.executable.to_string_lossy())
+    let output = Cmd::new(&shell.executable)
         .args(args.iter().copied())
         .external("commit.generation")
         .stdin_bytes(prompt)
