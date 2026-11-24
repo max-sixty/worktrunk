@@ -54,7 +54,7 @@ pub fn handle_pi_install(yes: bool) -> Result<()> {
     // and no Pi has most likely reached the wrong one. Say so here because
     // nothing downstream will: `wt config show` gates its PI section on
     // `which pi`, so the extension this writes stays invisible to them.
-    if super::show::is_omp_available() && !super::show::is_pi_available() {
+    if super::omp::is_omp_available() && !is_pi_available() {
         eprintln!(
             "{}",
             warning_message(cformat!(
@@ -87,4 +87,12 @@ pub fn handle_pi_uninstall(yes: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Check if the Pi coding agent CLI is available.
+pub(super) fn is_pi_available() -> bool {
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_PI_INSTALLED") {
+        return val == "1";
+    }
+    which::which("pi").is_ok()
 }

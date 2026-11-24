@@ -16,7 +16,7 @@ use crate::output::print_json;
 
 use super::command_approval::approve_commit_template_append;
 use super::command_executor::FailureStrategy;
-use super::commit::{CommitOptions, HookGate};
+use super::commit::{CommitOptions, HookGate, PreApprovedGuidance};
 use super::context::CommandEnv;
 use super::flag_pair;
 use super::hook_plan::{ApprovedHookPlan, HookPlanBuilder, execute_planned_hook};
@@ -392,7 +392,7 @@ fn merge_in(
     } else {
         None
     };
-    let guidance = super::step::PreApprovedGuidance::Resolved(project_append);
+    let guidance = PreApprovedGuidance::Resolved(project_append);
 
     // Only confirmed stages are reported on failure. In particular cleanup
     // stays unknown until finish_after_merge records its removal decision.

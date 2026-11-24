@@ -10,7 +10,6 @@ use worktrunk::path::paths_match;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, info_message, println, progress_message, success_message};
 
-use super::show::{claude_config_dir, is_claude_available, is_statusline_configured};
 use crate::commands::is_worktree_at_expected_path;
 use crate::output::print_json;
 use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
@@ -21,6 +20,75 @@ const PLUGIN_NAME: &str = "worktrunk";
 /// `PLUGIN@MARKETPLACE` selector `claude plugin uninstall` takes, and the
 /// `id` Claude Code lists the plugin under.
 const PLUGIN_SELECTOR: &str = "worktrunk@worktrunk";
+
+/// Check if Claude Code CLI is available
+pub(super) fn is_claude_available() -> bool {
+    // Allow tests to override detection
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
+        return val == "1";
+    }
+    which::which("claude").is_ok()
+}
+
+/// Get the Claude Code config directory.
+///
+/// This locates `settings.json`, the one Claude Code file wt reads. It reads
+/// that file because it writes it: `install-statusline` merges the
+/// `statusLine` key in, and Claude Code has no command that reports the
+/// setting back. Everything else wt wants to know about a harness it asks the
+/// harness (see [`super::harness_listing`]).
+///
+/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its config
+/// away from the default `~/.claude`. A leading `~` in the value is expanded
+/// against the home directory; the shell normally expands it before the
+/// variable is set, so a literal `~` only reaches us when the variable is set
+/// in a non-shell context.
+fn claude_config_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        if dir == "~" {
+            return worktrunk::path::home_dir();
+        }
+        if let Ok(rest) = Path::new(&dir).strip_prefix("~") {
+            return worktrunk::path::home_dir().map(|home| home.join(rest));
+        }
+        return Some(PathBuf::from(dir));
+    }
+    // Claude Code defaults to os.homedir(): USERPROFILE on Windows, not HOME.
+    worktrunk::path::home_dir().map(|home| home.join(".claude"))
+}
+
+/// Whether Claude Code's statusline runs worktrunk's.
+///
+/// The question is which subcommand the configured command invokes, so it's
+/// asked of the adjacent tokens `list statusline` — the binary answers the
+/// same whether it's `wt`, `git-wt`, or an absolute path. Matching on the
+/// binary alone accepted any command that merely spelled `wt ` somewhere
+/// (`newt status`), which reported a foreign statusline as worktrunk's and
+/// left `install-statusline` refusing to install.
+pub(super) fn is_statusline_configured() -> bool {
+    let Some(config_dir) = claude_config_dir() else {
+        return false;
+    };
+
+    let settings_file = config_dir.join("settings.json");
+    let Ok(content) = std::fs::read_to_string(&settings_file) else {
+        return false;
+    };
+
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return false;
+    };
+
+    json.get("statusLine")
+        .and_then(|s| s.get("command"))
+        .and_then(|c| c.as_str())
+        .is_some_and(|cmd| {
+            let tokens: Vec<&str> = cmd.split_whitespace().collect();
+            tokens.windows(2).any(|pair| pair == ["list", "statusline"])
+        })
+}
 
 /// Handle `wt config plugins claude install`
 pub fn handle_claude_install(yes: bool) -> anyhow::Result<()> {

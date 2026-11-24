@@ -71,3 +71,11 @@ pub fn handle_omp_uninstall(yes: bool) -> Result<()> {
     let target = plugin_path()?;
     super::uninstall_file_plugin("oh-my-pi", &target, yes)
 }
+
+/// Check if the oh-my-pi coding agent CLI is available.
+pub(super) fn is_omp_available() -> bool {
+    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OMP_INSTALLED") {
+        return val == "1";
+    }
+    which::which("omp").is_ok()
+}
