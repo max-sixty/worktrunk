@@ -167,11 +167,17 @@ impl ConfigAction {
 }
 
 /// The header comment every wrapper template worktrunk has shipped opens with,
-/// and which a user's own `wt.fish` / `wt.nu` would not carry.
-const WRAPPER_MARKER: &str = "worktrunk shell integration for";
+/// and which a user's own `wt.fish` / `wt.nu` would not open with.
+const WRAPPER_MARKER: &str = "# worktrunk shell integration for";
 
 /// The header every fish completion file worktrunk has shipped opens with.
 const COMPLETION_MARKER: &str = "# worktrunk completions for";
+
+/// Whether a fish completion file is one worktrunk generated: it opens with
+/// [`COMPLETION_MARKER`].
+fn is_worktrunk_completion_content(content: &str) -> bool {
+    content.starts_with(COMPLETION_MARKER)
+}
 
 /// Whether a whole file is one worktrunk generated, and so is `uninstall`'s to
 /// delete.
@@ -185,7 +191,7 @@ const COMPLETION_MARKER: &str = "# worktrunk completions for";
 ///
 /// The answer is independent of the binary name embedded in the file, so a
 /// wrapper installed as `wt.fish`, `git-wt.fish`, or `git-wt.nu` is recognized
-/// the same way. Every wrapper template worktrunk renders carries the header,
+/// the same way. Every wrapper template worktrunk renders opens with the header,
 /// so that answers first. The fallback covers the legacy `conf.d/{cmd}.fish`,
 /// which predates the templates and holds nothing but the init line: a file
 /// qualifies only when every non-blank, non-comment line is an integration line
@@ -197,7 +203,7 @@ const COMPLETION_MARKER: &str = "# worktrunk completions for";
 /// `wt config shell init` amid other code — or merely mentions it in a comment
 /// — survives; a whole-file substring test would delete it.
 fn is_worktrunk_managed_content(content: &str) -> bool {
-    if content.contains(WRAPPER_MARKER) {
+    if content.starts_with(WRAPPER_MARKER) {
         return true;
     }
     let code_lines = fish_code_lines(content);
@@ -1487,7 +1493,7 @@ fn scan_for_uninstall(
     if shells.contains(&Shell::Fish) {
         let completions_dir = shell::fish_config_dir(&home).join("completions");
         let completions =
-            scan_managed_files(&completions_dir, "fish", |c| c.contains(COMPLETION_MARKER))?;
+            scan_managed_files(&completions_dir, "fish", is_worktrunk_completion_content)?;
         if completions.is_empty() {
             completion_not_found.push((Shell::Fish, completions_dir));
         }
@@ -1927,6 +1933,16 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_content_matches_only_a_file_opening_with_the_header() {
+        assert!(is_worktrunk_completion_content(&fish_completion_content(
+            "git-wt"
+        )));
+        assert!(!is_worktrunk_completion_content(
+            "# my completions, after # worktrunk completions for fish\ncomplete -c foo\n"
+        ));
+    }
+
+    #[test]
     fn test_managed_content_matches_wrappers_not_mentions() {
         // Ours: the header every wrapper template carries, under any binary
         // name, plus the headerless legacy `conf.d/{cmd}.fish`, whose code
@@ -1950,6 +1966,9 @@ mod tests {
             "function notes\n    echo run wt config shell init fish to set up\nend\n",
             "# reminder: wt config shell init fish\nfunction helpers\n    cat ~/.aliases | source\nend\n",
             "function helper\n    command wt config shell init fish | source\nend\n",
+            // The header only marks a file worktrunk wrote where the file opens
+            // with it; a user's file that quotes it further down is theirs.
+            "function my_wt\n    # adapted from: # worktrunk shell integration for fish\n    command wt $argv\nend\n",
             "",
         ] {
             assert!(!is_worktrunk_managed_content(content), "{content}");
