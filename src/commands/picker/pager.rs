@@ -85,7 +85,9 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     tracing::debug!(pager_cmd = %pager_cmd, "Piping through pager: {}", pager_cmd);
 
     let mut trace = worktrunk::trace::CommandTrace::new(None, pager_cmd).reads_stdin(true);
-    let spawned = Cmd::shell(pager_cmd)
+    let spawned = Cmd::new("sh")
+        .arg("-c")
+        .arg(pager_cmd)
         .env("COLUMNS", width.to_string())
         .into_command()
         .and_then(|mut cmd| {
