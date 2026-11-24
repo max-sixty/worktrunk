@@ -53,7 +53,7 @@ use worktrunk::styling::{
 };
 
 use super::super::list::ci_status::{
-    CiSource, CiStatus, GitHubComment, GitHubPrInfo, PrRef, PrStatus, ReviewState,
+    GitHubComment, GitHubPrInfo, GitLabMrListEntry, PrRef, PrStatus, ReviewState,
     non_interactive_cmd, tool_available,
 };
 use super::super::list::columns::ColumnKind;
@@ -713,26 +713,17 @@ fn parse_github_prs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
 
 #[derive(Deserialize)]
 struct GlabMr {
-    iid: u32,
-    title: String,
     #[serde(default)]
     source_branch: String,
-    /// Diff head SHA; lets the `log` tab use a local `git log` when present.
-    #[serde(default)]
-    sha: String,
-    #[serde(default)]
-    author: GlabAuthor,
-    #[serde(default)]
-    draft: bool,
-    #[serde(default)]
-    web_url: Option<String>,
-    /// MR description; shown in the `pr` preview tab. Rides the one list call.
-    #[serde(default)]
-    description: String,
-    /// Coarse merge/CI signal the list call carries (full pipeline status
-    /// needs a per-MR `glab mr view`, which `--prs` avoids).
-    #[serde(default)]
-    detailed_merge_status: Option<String>,
+    /// The fields `wt list` parses from the same `glab mr list` payload: `iid`,
+    /// `title`, `sha` (lets the `log` tab use a local `git log` when present),
+    /// `author`, `draft`, `web_url`, `description`, `has_conflicts`,
+    /// `detailed_merge_status`. Flattened so the CI column and review state come
+    /// from the one GitLab mapping, [`GitLabMrListEntry::open_mr_status`]. The
+    /// list call carries no pipeline detail (that needs a per-MR `glab mr view`,
+    /// which `--prs` avoids), so CI stays coarse.
+    #[serde(flatten)]
+    info: GitLabMrListEntry,
 }
 
 #[derive(Deserialize, Default)]
@@ -775,22 +766,18 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
     Ok(mrs
         .into_iter()
         .map(|mr| {
-            let status = gitlab_mr_status(
-                mr.iid,
-                mr.draft,
-                mr.detailed_merge_status.as_deref(),
-                mr.web_url.clone(),
-            );
+            let status = mr.info.open_mr_status();
+            let info = mr.info;
             PrEntry {
-                number: mr.iid,
-                title: mr.title,
+                number: info.iid as u32,
+                title: info.title.unwrap_or_default(),
                 head_branch: mr.source_branch,
-                head_oid: Some(mr.sha).filter(|s| !s.is_empty()),
-                author: mr.author.username,
-                is_draft: mr.draft,
-                url: mr.web_url,
+                head_oid: Some(info.sha).filter(|s| !s.is_empty()),
+                author: info.author.map(|a| a.username).unwrap_or_default(),
+                is_draft: info.draft == Some(true),
+                url: info.web_url,
                 kind: RefType::Mr,
-                body: mr.description,
+                body: info.description.unwrap_or_default(),
                 // GitLab's MR `updated_at` is throttled and delete-blind, so it
                 // can't key a comments cache — MR comments stay uncached.
                 updated_at: None,
@@ -798,47 +785,6 @@ fn parse_gitlab_mrs(stdout: &[u8]) -> anyhow::Result<Vec<PrEntry>> {
             }
         })
         .collect())
-}
-
-/// Best-effort MR status from the single `glab mr list` call. The list payload
-/// carries `draft` and `detailed_merge_status` but not pipeline detail (that
-/// needs a per-MR `glab mr view`, which `--prs` avoids), so CI is coarse:
-/// conflicts and a still-running merge pipeline are the only states the list
-/// reports. `not_approved` maps to a pending review; draft outranks it.
-fn gitlab_mr_status(
-    iid: u32,
-    draft: bool,
-    detailed_merge_status: Option<&str>,
-    url: Option<String>,
-) -> PrStatus {
-    let ci_status = match detailed_merge_status {
-        Some("broken_status") | Some("conflict") => CiStatus::Conflicts,
-        Some("ci_still_running") => CiStatus::Running,
-        _ => CiStatus::NoCI,
-    };
-    let review_state = if draft {
-        Some(ReviewState::Draft)
-    } else if detailed_merge_status == Some("not_approved") {
-        Some(ReviewState::Pending)
-    } else {
-        None
-    };
-    PrStatus {
-        ci_status,
-        source: CiSource::PullRequest,
-        is_stale: false,
-        is_priming: false,
-        url,
-        number: Some(PrRef::mr(u64::from(iid))),
-        review_state,
-        // `PrEntry::display_status` overlays title/body/author from the
-        // `PrEntry`, so they stay absent here.
-        title: None,
-        body: None,
-        author: None,
-        comment_count: None,
-        updated_at: None,
-    }
 }
 
 /// The pane for the tabs a `--prs` row leaves empty — complete diff (1),
@@ -1315,6 +1261,7 @@ fn render_freeform_row(entry: &PrEntry, list_width: usize) -> String {
 // cached the same way via `spawn_pr_previews`.
 #[cfg(test)]
 mod tests {
+    use super::super::super::list::ci_status::{CiSource, CiStatus};
     use super::super::super::list::layout::LinkStyle;
     use super::super::items::PreviewCache;
     use super::super::preview_notify::PreviewNotifier;
@@ -1745,16 +1692,22 @@ mod tests {
 
     #[test]
     fn parse_gitlab_builds_coarse_status_from_the_list_call() {
-        // The single `glab mr list` call carries draft + detailed_merge_status,
-        // not pipeline detail: draft dims, conflict reports Conflicts.
+        // The single `glab mr list` call carries draft, has_conflicts and
+        // detailed_merge_status, not pipeline detail: draft dims, and the
+        // conflicts rule matches `wt list` — `has_conflicts` outranks another
+        // status, and `broken_status` (a potential conflict) counts too.
         let json = br#"[
-          {"iid":3,"title":"t","source_branch":"b","draft":true,"detailed_merge_status":"conflict"}
+          {"iid":3,"title":"t","source_branch":"b","draft":true,"detailed_merge_status":"conflict"},
+          {"iid":4,"title":"t","source_branch":"b","has_conflicts":true,"detailed_merge_status":"ci_still_running"},
+          {"iid":5,"title":"t","source_branch":"b","detailed_merge_status":"broken_status"}
         ]"#;
         let entries = parse_gitlab_mrs(json).unwrap();
         let status = &entries[0].status;
         assert_eq!(status.ci_status, CiStatus::Conflicts);
         assert_eq!(status.review_state, Some(ReviewState::Draft));
         assert_eq!(status.number.map(|r| r.to_string()).as_deref(), Some("!3"));
+        assert_eq!(entries[1].status.ci_status, CiStatus::Conflicts);
+        assert_eq!(entries[2].status.ci_status, CiStatus::Conflicts);
     }
 
     #[test]
