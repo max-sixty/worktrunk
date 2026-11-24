@@ -509,10 +509,6 @@ impl ListItem {
         &self.branch_ref.commit_sha
     }
 
-    pub fn branch_diff(&self) -> Option<&BranchDiffTotals> {
-        self.branch_diff.as_ref()
-    }
-
     pub fn worktree_data(&self) -> Option<&WorktreeData> {
         match &self.kind {
             ItemKind::Worktree(data) => Some(data),
@@ -629,7 +625,7 @@ impl ListItem {
         }
 
         // 5. Branch diff vs main (priority 6)
-        if let Some(branch_diff) = self.branch_diff()
+        if let Some(branch_diff) = &self.branch_diff
             && !branch_diff.diff.is_empty()
             && let Some(formatted) = ColumnKind::BranchDiff
                 .format_diff_plain(branch_diff.diff.added, branch_diff.diff.deleted)
@@ -1180,13 +1176,6 @@ mod tests {
 
         item.reclassify_as_branch("feature".into());
         assert_eq!(item.id(), BranchRef::local_branch("feature", "abc123").id());
-    }
-
-    #[test]
-    fn test_list_item_branch_diff() {
-        let item = ListItem::new_branch("abc123".to_string(), "feature".to_string());
-        // New items have no branch_diff computed yet
-        assert!(item.branch_diff().is_none());
     }
 
     #[test]

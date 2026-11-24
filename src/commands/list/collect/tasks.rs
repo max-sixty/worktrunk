@@ -386,7 +386,7 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
             is_patch_id_match: false,
         });
     };
-    // Combine probes the same way `compute_integration_reason_uncached`
+    // Combine probes the same way `Repository::integration_reason`
     // ORs the two `check_integration` calls: a branch is integrated if
     // merging would add nothing OR a patch-id matches against EITHER
     // side. So `would_merge_add` ANDs (false on either ⇒ integrated)
