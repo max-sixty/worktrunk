@@ -94,6 +94,86 @@ fn test_list_multiple_worktrees(repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+/// `wt list` starts each worktree's fsmonitor daemon with that worktree as
+/// cwd, so the start must not forward an inherited `GIT_DIR`. A `!wt` alias
+/// from linked worktree `l1` exports `GIT_DIR` as `l1`'s private gitdir. A
+/// daemon started for `l2` with that `GIT_DIR` binds `l1`'s socket while
+/// watching `l2`, so `git status` in `l1` can miss `l1`'s edits.
+///
+/// A `git` shim on `PATH` records the `GIT_DIR` each `fsmonitor--daemon
+/// start` receives and exits without starting a daemon. The shim enables
+/// `core.fsmonitor` only on the `git config --list` call wt reads it from.
+/// Setting it in the repo's config would make each `git status` start a real
+/// daemon itself, through git's exec path rather than the shim.
+#[rstest]
+#[cfg(target_os = "macos")]
+fn test_list_fsmonitor_start_drops_inherited_git_dir(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let l1 = repo.add_worktree("l1");
+    let l2 = repo.add_worktree("l2");
+    let l1_git_dir = std::fs::read_to_string(l1.join(".git")).unwrap();
+    let l1_git_dir = l1_git_dir.trim().strip_prefix("gitdir: ").unwrap();
+
+    let scratch = crate::common::test_tempdir();
+    let markers = scratch.path().join("markers");
+    std::fs::create_dir(&markers).unwrap();
+    let bin_dir = scratch.path().join("bin");
+    std::fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+case "$1 $2" in
+  'fsmonitor--daemon start')
+    printf '%s' "$GIT_DIR" > {markers}/"$(basename "$(pwd)")"
+    exit 0 ;;
+  'config --list')
+    exec {real_git} -c core.fsmonitor=true "$@" ;;
+esac
+exec {real_git} "$@"
+"#,
+            markers = shell_escape::unix::escape(markers.to_string_lossy()),
+            real_git = shell_escape::unix::escape(which::which("git").unwrap().to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = vec![bin_dir];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+
+    let output = repo
+        .wt_command()
+        .current_dir(&l1)
+        .arg("list")
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .env("GIT_DIR", l1_git_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    for worktree in [repo.root_path(), l1.as_path(), l2.as_path()] {
+        let marker = markers.join(worktree.file_name().unwrap());
+        let seen = std::fs::read_to_string(&marker).unwrap_or_else(|e| {
+            panic!(
+                "no fsmonitor daemon start ran in {}: {e}",
+                worktree.display()
+            )
+        });
+        assert_eq!(
+            seen,
+            "",
+            "fsmonitor daemon start in {} inherited GIT_DIR",
+            worktree.display()
+        );
+    }
+}
+
 ///
 /// Simulates realistic usage by running switch commands from the correct worktree directories.
 #[rstest]
