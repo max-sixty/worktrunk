@@ -891,36 +891,32 @@ fn try_forward_completion_to_custom(
     // Resolve before applying the child's cwd, as runtime custom dispatch
     // does. Relative PATH entries must not select another executable in -C.
     let path = which::which(binary).map_err(std::io::Error::other)?;
-    let mut cmd = std::process::Command::new(path);
+    let mut cmd = worktrunk::shell_exec::Cmd::new(path)
+        .arg("--")
+        .args(&child_args)
+        .env("COMPLETE", shell)
+        .env(
+            "_CLAP_IFS",
+            std::env::var("_CLAP_IFS").unwrap_or_else(|_| "\n".to_string()),
+        )
+        // Don't propagate `WORKTRUNK_VERBOSE` to the forwarded binary: at
+        // level 2 a worktrunk-family child would re-run `logging::init` and
+        // truncate the repo-wide `.git/wt/logs/` trace files this completion
+        // just wrote — wasted work at best, the parent's trace lost at worst
+        // (the child's stderr is never shown, so it can't surface anything
+        // useful anyway).
+        .env_remove(crate::logging::VERBOSE_ENV);
     if let Some(dir) = current_dir {
-        cmd.current_dir(dir);
+        cmd = cmd.current_dir(dir);
     }
-    cmd.arg("--");
-    cmd.args(&child_args);
-    cmd.env("COMPLETE", shell);
-    cmd.env(
-        "_CLAP_IFS",
-        std::env::var("_CLAP_IFS").unwrap_or_else(|_| "\n".to_string()),
-    );
     if let Some(idx) = index {
-        cmd.env("_CLAP_COMPLETE_INDEX", idx.to_string());
+        cmd = cmd.env("_CLAP_COMPLETE_INDEX", idx.to_string());
     }
-    // Don't propagate `WORKTRUNK_VERBOSE` to the forwarded binary: at level 2 a
-    // worktrunk-family child would re-run `logging::init` and truncate the
-    // repo-wide `.git/wt/logs/` trace files this completion just wrote — wasted
-    // work at best, the parent's trace lost at worst (the child's stderr is
-    // discarded below, so it can't surface anything useful anyway).
-    cmd.env_remove(crate::logging::VERBOSE_ENV);
-    // The retired single-file protocol is never delegated to child processes.
-    cmd.env_remove(worktrunk::shell_exec::RETIRED_DIRECTIVE_FILE_ENV_VAR);
 
-    // Capture the custom binary's stdout — it carries the forwarded completion
-    // candidates. Uses `std::process::Command` rather than `shell_exec::Cmd`
-    // because we only need that captured stdout, not `Cmd`'s tracing/streaming;
-    // stderr is discarded so the child can't write above the user's prompt.
-    cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    let result = worktrunk::shell_exec::spawn(&mut cmd)?.wait_with_output()?;
+    // The custom binary's stdout carries the forwarded completion candidates.
+    // Its stderr is captured and dropped, so the child can't write above the
+    // user's prompt.
+    let result = cmd.run()?;
     if result.status.success() {
         Ok(String::from_utf8(result.stdout).ok())
     } else {

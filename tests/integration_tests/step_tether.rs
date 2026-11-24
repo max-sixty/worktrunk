@@ -5,21 +5,26 @@
 //! own. The supervised snippet records its process-group id (the leader's pid,
 //! since `tether` puts the child in a new group) and backgrounds a second
 //! sleep, so the assertions prove the whole group dies, including the
-//! reparented sidecar a parent-walk would miss.
-#![cfg(unix)]
+//! reparented sidecar a parent-walk would miss. The process-group tests are
+//! Unix-only.
 
+#[cfg(unix)]
 use std::path::Path;
+#[cfg(unix)]
 use std::process::{Child, Stdio};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use crate::common::{TestRepo, repo, wait_for_file_content};
-use nix::errno::Errno;
-use nix::sys::signal::kill;
-use nix::unistd::Pid;
+#[cfg(unix)]
+use crate::common::wait_for_file_content;
+use crate::common::{TestRepo, repo};
+#[cfg(unix)]
+use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
 use rstest::rstest;
 
 /// True while any process in group `pgid` still exists. `kill(-pgid, 0)` is the
 /// portable group-liveness probe: `ESRCH` once the group is empty.
+#[cfg(unix)]
 fn group_alive(pgid: i32) -> bool {
     !matches!(kill(Pid::from_raw(-pgid), None), Err(Errno::ESRCH))
 }
@@ -27,6 +32,7 @@ fn group_alive(pgid: i32) -> bool {
 /// Poll `cond` with a generous cap and fast interval (per tests/AGENTS.md:
 /// long timeout for slow CI, fast polling so it returns immediately when the
 /// event has happened).
+#[cfg(unix)]
 fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
@@ -41,6 +47,7 @@ fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
 /// Spawn `wt step tether` supervising a snippet that records its pgid to
 /// `pidfile`, backgrounds a sidecar sleep, then blocks. Returns the child
 /// handle and the pgid once recorded.
+#[cfg(unix)]
 fn spawn_tether(repo: &TestRepo, cwd: &Path, pidfile: &Path, tail: &str) -> (Child, i32) {
     let snippet = format!(
         "printf %s \"$$\" > \"{}\"; sleep 600 & {tail}",
@@ -68,6 +75,7 @@ fn spawn_tether(repo: &TestRepo, cwd: &Path, pidfile: &Path, tail: &str) -> (Chi
 /// Both ways a worktree disappears tear the whole group down: outright
 /// deletion (`rm -rf` / `git worktree remove`) and rename into trash
 /// (worktrunk's own removal). The supervisor's existence poll sees both.
+#[cfg(unix)]
 #[rstest]
 fn test_tether_kills_process_group_when_worktree_removed(mut repo: TestRepo) {
     for mechanism in ["delete", "rename"] {
@@ -112,6 +120,7 @@ fn test_tether_kills_process_group_when_worktree_removed(mut repo: TestRepo) {
 
 /// When the supervised command exits on its own, the supervisor sweeps the
 /// group (so the backgrounded sidecar dies too) and then exits.
+#[cfg(unix)]
 #[rstest]
 fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
     let pidfile = repo.home_path().join("tether-selfexit.pgid");
@@ -139,6 +148,7 @@ fn test_tether_kills_process_group_when_command_exits(repo: TestRepo) {
 /// A terminal Ctrl-C reaches the supervisor's foreground group, while the
 /// supervised command is in a separate group. The supervisor must still reap
 /// that command before it exits.
+#[cfg(unix)]
 #[rstest]
 fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -196,6 +206,7 @@ fn test_tether_kills_process_group_when_interrupted(repo: TestRepo) {
 /// the canonical way to start a server from a subdirectory (Astro in `docs/`,
 /// a dev server in `frontend/`) given the command runs directly with no shell
 /// to `cd`. The reaper still watches the launch cwd, not `-C`.
+#[cfg(unix)]
 #[rstest]
 fn test_tether_runs_command_in_working_dir(repo: TestRepo) {
     let subdir = repo.path().join("subdir");
@@ -236,6 +247,7 @@ fn test_tether_runs_command_in_working_dir(repo: TestRepo) {
     );
 }
 
+#[cfg(unix)]
 #[rstest]
 fn test_tether_propagates_command_exit_status(repo: TestRepo) {
     let status = repo
@@ -246,4 +258,33 @@ fn test_tether_propagates_command_exit_status(repo: TestRepo) {
         .expect("run wt step tether");
 
     assert_eq!(status.code(), Some(7));
+}
+
+/// A bare program name reaches a Windows batch launcher, as `npm` reaches
+/// the `npm.cmd` Node installs: `wt step tether -- npm run dev` is the
+/// documented dev-server recipe.
+#[cfg(windows)]
+#[rstest]
+fn test_tether_runs_batch_launcher(repo: TestRepo) {
+    let bin = repo.home_path().join("tether-bin");
+    std::fs::create_dir(&bin).unwrap();
+    let marker = repo.home_path().join("tether-launcher-ran.txt");
+    std::fs::write(
+        bin.join("wt-tether-launcher.cmd"),
+        format!("@echo ran> \"{}\"\r\n", marker.display()),
+    )
+    .unwrap();
+    let mut path = vec![bin];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+
+    let status = repo
+        .wt_command()
+        .args(["step", "tether", "--", "wt-tether-launcher"])
+        .current_dir(repo.path())
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .status()
+        .expect("run wt step tether");
+
+    assert!(status.success(), "{status:?}");
+    assert!(marker.exists(), "the batch launcher did not run");
 }

@@ -369,7 +369,7 @@ pub fn execute(
     let program = argv.next().context("--execute requires a program")?;
     // wt relocated the payload into a worktree it selected; its `git` calls
     // must discover that worktree from the cwd, not an inherited `GIT_DIR`
-    // (issue #3373; see `scrub_git_discovery_env_vars`).
+    // (issue #3373; see `Cmd::scrub_git_discovery_env`).
     let cmd = Cmd::new(program)
         .args(argv)
         .inherit_stdin()

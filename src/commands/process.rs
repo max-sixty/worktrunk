@@ -2,8 +2,6 @@ use anyhow::Context;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(windows)]
-use std::process::Command;
 use std::process::Stdio;
 use worktrunk::git::{HookType, Repository};
 use worktrunk::path::{format_path_for_display, sanitize_for_filename};
@@ -198,117 +196,54 @@ pub fn spawn_detached_exec(
         log_path.file_name().unwrap_or_default().to_string_lossy()
     );
 
-    let is_background_hook = matches!(hook_log, HookLog::Hook { .. });
-
-    #[cfg(unix)]
-    {
-        let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
-        spawn_detached_exec_unix(
-            worktree_path,
-            program,
-            args,
-            log_file,
-            stdin_bytes,
-            low_priority,
-            is_background_hook,
-        )?;
-    }
-
-    #[cfg(windows)]
-    {
-        spawn_detached_exec_windows(
-            worktree_path,
-            program,
-            args,
-            log_file,
-            stdin_bytes,
-            is_background_hook,
-        )?;
-    }
-
-    Ok(log_path)
-}
-
-/// Apply [`worktrunk::priority::FOREGROUND_ENV_VAR`] to a
-/// [`std::process::Command`] when spawning a background hook pipeline.
-fn set_background_hook_env(cmd: &mut std::process::Command, is_background_hook: bool) {
-    if is_background_hook {
-        cmd.env(
+    // See [`worktrunk::priority`] for the priority-lowering rationale.
+    let low_priority = matches!(hook_log, HookLog::Internal(_) | HookLog::Shared(_));
+    // Detached children run in a `wt`-chosen directory and outlive this
+    // process, so they never keep an inherited `GIT_DIR`.
+    let mut cmd = worktrunk::priority::command(program, low_priority)
+        .args(args)
+        .current_dir(worktree_path)
+        .scrub_git_discovery_env();
+    if matches!(hook_log, HookLog::Hook { .. }) {
+        cmd = cmd.env(
             worktrunk::priority::FOREGROUND_ENV_VAR,
             worktrunk::priority::BACKGROUND_HOOK_VALUE,
         );
     }
-}
-
-#[cfg(unix)]
-fn spawn_detached_exec_unix(
-    worktree_path: &Path,
-    program: &Path,
-    args: &[impl AsRef<OsStr>],
-    log_file: fs::File,
-    stdin_bytes: &[u8],
-    low_priority: bool,
-    is_background_hook: bool,
-) -> anyhow::Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    // See [`worktrunk::priority`] for the priority-lowering rationale.
-    let mut cmd = worktrunk::priority::command(program, low_priority);
-    cmd.args(args)
-        .current_dir(worktree_path)
-        .stdin(
-            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
-                .context("Failed to prepare detached input")?,
-        )
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .process_group(0);
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
-    set_background_hook_env(&mut cmd, is_background_hook);
+    let mut cmd = cmd.into_command()?;
+    cmd.stdin(
+        worktrunk::shell_exec::buffered_stdin(stdin_bytes)
+            .context("Failed to prepare detached input")?,
+    )
+    .stdout(Stdio::from(
+        log_file
+            .try_clone()
+            .context("Failed to clone log file handle")?,
+    ))
+    .stderr(Stdio::from(log_file));
+    detach(&mut cmd);
     worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
 
-    Ok(())
+    Ok(log_path)
 }
 
+/// A new process group, so the child survives the terminal closing.
+#[cfg(unix)]
+fn detach(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+
+    cmd.process_group(0);
+}
+
+/// A new process group with no console window, detached from this one.
 #[cfg(windows)]
-fn spawn_detached_exec_windows(
-    worktree_path: &Path,
-    program: &Path,
-    args: &[impl AsRef<OsStr>],
-    log_file: fs::File,
-    stdin_bytes: &[u8],
-    is_background_hook: bool,
-) -> anyhow::Result<()> {
+fn detach(cmd: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-    let mut cmd = Command::new(program);
-    cmd.args(args)
-        .current_dir(worktree_path)
-        .stdin(
-            worktrunk::shell_exec::buffered_stdin(stdin_bytes)
-                .context("Failed to prepare detached input")?,
-        )
-        .stdout(Stdio::from(
-            log_file
-                .try_clone()
-                .context("Failed to clone log file handle")?,
-        ))
-        .stderr(Stdio::from(log_file))
-        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    worktrunk::shell_exec::scrub_git_discovery_env_vars(&mut cmd);
-    set_background_hook_env(&mut cmd, is_background_hook);
-    worktrunk::shell_exec::spawn(&mut cmd).context("Failed to spawn detached process")?;
-
-    Ok(())
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
 /// Repo-wide internal cleanup op, run fire-and-forget after `wt remove`'s

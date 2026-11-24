@@ -2612,7 +2612,7 @@ greet = "echo hello {{ args }}"
 /// `GIT_DIR`/`GIT_WORK_TREE` pass through — unlike hooks and `wt step
 /// for-each`, which `wt` relocates into worktrees it selects and therefore
 /// scrubs (the keep side of the classification in
-/// `scrub_git_discovery_env_vars`; issue #3373).
+/// `Cmd::scrub_git_discovery_env`; issue #3373).
 #[rstest]
 #[cfg(unix)]
 fn test_alias_keeps_inherited_git_discovery_vars(repo: TestRepo) {
@@ -2645,6 +2645,48 @@ record-git-env = "printf '[%s][%s]' \"$GIT_DIR\" \"$GIT_WORK_TREE\" > env_seen.t
         seen, expected,
         "alias should see wt's inherited git-discovery vars unchanged"
     );
+}
+
+/// Inherited *relative* discovery vars reach every alias step absolute,
+/// resolved against the directory `wt` was invoked from (issue #1914). Alias
+/// steps run at the worktree root, so from a subdirectory a relative
+/// `GIT_DIR` passed through as-is would name another directory. Serial steps
+/// and concurrent groups spawn through different paths, so the alias has one
+/// of each.
+#[rstest]
+fn test_alias_steps_get_absolute_inherited_git_dir(repo: TestRepo) {
+    repo.write_test_config(
+        r#"
+[aliases]
+where = [
+    "git rev-parse HEAD > serial.txt",
+    { first = "git rev-parse HEAD > first.txt", second = "git rev-parse HEAD > second.txt" },
+]
+"#,
+    );
+    let subdir = repo.root_path().join("sub");
+    std::fs::create_dir(&subdir).unwrap();
+
+    let output = repo
+        .wt_command()
+        .args(["step", "where"])
+        .current_dir(&subdir)
+        .env("GIT_DIR", std::path::Path::new("..").join(".git"))
+        .env("GIT_WORK_TREE", "..")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "alias failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let head = repo.head_sha();
+    for step in ["serial", "first", "second"] {
+        let seen = std::fs::read_to_string(repo.root_path().join(format!("{step}.txt"))).unwrap();
+        assert_eq!(seen.trim(), head, "{step} step resolved another repository");
+    }
 }
 
 /// A detached worktree leaves `{{ branch }}` undefined, so `{% if branch %}`

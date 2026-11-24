@@ -48,11 +48,11 @@ Git itself may overwrite an ignored destination file when a tracked file arrives
 
 ### All Commands Through shell_exec::Cmd
 
-External commands use shell_exec::Cmd for logging and timing; Git generally uses Repository::run_command or WorkingTree::run_command. Use run for capture, stream for live output, delayed_stream for slow setup, and pipe_into for pipelines. In-process spawns outside Cmd use a CommandTrace guard; its contract is in src/trace/emit.rs. Detached background children and interactive helpers are deliberately untraced.
+External commands use shell_exec::Cmd for program resolution, environment, logging and timing; Git generally uses Repository::run_command or WorkingTree::run_command. Use run for capture, stream for live output, delayed_stream for slow setup, and pipe_into for pipelines. A spawn that owns its stdio, process group or wait builds its Command with Cmd::into_command and traces it with a CommandTrace guard, whose contract is in src/trace/emit.rs. Detached background children and interactive helpers are deliberately untraced.
 
 ### Git-Discovery Env Vars Follow Who Chose the Cwd
 
-A child whose cwd is a Worktrunk-chosen worktree must scrub inherited Git discovery variables before running, including hooks and worktree-local plumbing. Repo-level commands and commands in the user's own context keep inherited values. The site classification is in scrub_git_discovery_env_vars in src/shell_exec.rs.
+A child whose cwd is a Worktrunk-chosen worktree must scrub inherited Git discovery variables before running, including hooks and worktree-local plumbing. Repo-level commands and commands in the user's own context keep inherited values. The site classification is in Cmd::scrub_git_discovery_env in src/shell_exec.rs.
 
 ### Real-time Output Streaming
 

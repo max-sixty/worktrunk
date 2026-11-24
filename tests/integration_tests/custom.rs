@@ -133,17 +133,26 @@ fn custom_subcommand_scrubs_shell_exec_directives_and_preserves_cd() {
 if [ -n "${WORKTRUNK_DIRECTIVE_FILE+x}" ]; then
     printf 'retired write\n' >> "$WORKTRUNK_DIRECTIVE_FILE"
 fi
-printf 'retired=%s\ncd=%s\nexec=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WORKTRUNK_DIRECTIVE_CD_FILE-unset}" "${WORKTRUNK_DIRECTIVE_EXEC_FILE-unset}"
+printf 'retired=%s\ncd=%s\nexec=%s\nshell_cwd=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WORKTRUNK_DIRECTIVE_CD_FILE-unset}" "${WORKTRUNK_DIRECTIVE_EXEC_FILE-unset}" "${WORKTRUNK_SHELL_CWD-unset}"
 "#,
     )
     .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // `-C` moves the child but not the user's shell, so the shell cwd that
+    // travels with the CD directive is where `wt` was invoked.
+    let shell_dir = dunce::canonicalize(dir.path()).unwrap();
+    let child_dir = shell_dir.join("child");
+    std::fs::create_dir(&child_dir).unwrap();
 
     let mut cmd = wt_command();
     prepend_path(&mut cmd, dir.path());
     cmd.env(RETIRED_DIRECTIVE_FILE_ENV_VAR, &retired_file)
         .env(DIRECTIVE_CD_FILE_ENV_VAR, &cd_file)
         .env(DIRECTIVE_EXEC_FILE_ENV_VAR, &exec_file)
+        .current_dir(&shell_dir)
+        .arg("-C")
+        .arg(&child_dir)
         .arg("wt-test-extcmd-directives");
 
     let output = cmd.output().expect("failed to run wt");
@@ -159,6 +168,10 @@ printf 'retired=%s\ncd=%s\nexec=%s\n' "${WORKTRUNK_DIRECTIVE_FILE-unset}" "${WOR
         "{stdout}"
     );
     assert!(stdout.contains("exec=unset"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("shell_cwd={}\n", shell_dir.display())),
+        "{stdout}"
+    );
     assert_eq!(
         std::fs::read_to_string(&retired_file).unwrap(),
         "",

@@ -7,7 +7,7 @@
 //! and kills/reaps only the owned pager; preview falls back to the original text.
 
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,7 @@ use shared_child::SharedChild;
 
 use worktrunk::git::Repository;
 use worktrunk::shell::extract_filename_from_path;
+use worktrunk::shell_exec::Cmd;
 
 use crate::pager::git_pager;
 
@@ -84,22 +85,16 @@ pub(super) fn pipe_through_pager(text: &str, pager_cmd: &str, width: usize) -> S
     tracing::debug!(pager_cmd = %pager_cmd, "Piping through pager: {}", pager_cmd);
 
     let mut trace = worktrunk::trace::CommandTrace::new(None, pager_cmd).reads_stdin(true);
-    let input = match worktrunk::shell_exec::buffered_stdin(text.as_bytes()) {
-        Ok(input) => input,
-        Err(error) => {
-            trace.fail(&error);
-            return text.to_string();
-        }
-    };
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(pager_cmd)
-        .stdin(input)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .env("COLUMNS", width.to_string());
-    worktrunk::shell_exec::scrub_directive_env_vars(&mut cmd);
-    let child = match worktrunk::shell_exec::spawn_shared_child(&mut cmd) {
+    let spawned = Cmd::shell(pager_cmd)
+        .env("COLUMNS", width.to_string())
+        .into_command()
+        .and_then(|mut cmd| {
+            cmd.stdin(worktrunk::shell_exec::buffered_stdin(text.as_bytes())?)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            worktrunk::shell_exec::spawn_shared_child(&mut cmd)
+        });
+    let child = match spawned {
         Ok(child) => child,
         Err(e) => {
             trace.fail(&e);

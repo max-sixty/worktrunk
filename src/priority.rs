@@ -30,11 +30,12 @@
 //! - [`lower_current_process`] — self-lower by pid. Used when the *current*
 //!   worktrunk process (and any threads/children it later spawns) should run
 //!   at lower priority. The policy is inherited across `fork`/`exec`.
-//! - [`command`] — build a [`Command`] that starts its child under the
+//! - [`command`] — build a [`Cmd`] that starts its child under the
 //!   policy, by wrapping it in `taskpolicy -b <cmd>` or
 //!   `ionice … nice … <cmd>`. Used for detached background spawns where we
 //!   want the wrapper tool itself to apply the policy and then exec the real
-//!   work.
+//!   work. The caller adds arguments and environment to the [`Cmd`] like any
+//!   other, so the wrapper and the work it execs get the same setup.
 //!
 //! ## Background-hook context signalling
 //!
@@ -48,9 +49,10 @@
 //! not yet a stable contract.
 
 use std::ffi::OsStr;
-use std::process::Command;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::sync::LazyLock;
+
+use crate::shell_exec::Cmd;
 
 /// Whether `ionice` is available on PATH. Probed once per process so we don't
 /// stat `$PATH` on every call.
@@ -93,9 +95,7 @@ pub fn lower_current_process() {
     {
         let pid = std::process::id().to_string();
         let run = |program: &str, args: &[&str]| {
-            let _ = crate::shell_exec::Cmd::new(program)
-                .args(args.iter().copied())
-                .run();
+            let _ = Cmd::new(program).args(args.iter().copied()).run();
         };
 
         #[cfg(target_os = "macos")]
@@ -110,23 +110,21 @@ pub fn lower_current_process() {
     }
 }
 
-/// Build a [`Command`] that runs `program` at lowered priority when `lower`
-/// is set, or at normal priority when not.
+/// Build a [`Cmd`] that runs `program` at lowered priority when `lower` is
+/// set, or at normal priority when not.
 ///
 /// The wrapper tool (`taskpolicy` on macOS, `ionice`/`nice` on Linux) applies
 /// the policy and then execs `program`, so policy is inherited by the child
 /// and its descendants. `taskpolicy` takes `program` as a positional arg (no
 /// `--` separator accepted); safe because callers pass `sh` or an absolute
 /// path. See the [module docs](self) for the full policy.
-pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Command {
+pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Cmd {
     if !lower {
-        return Command::new(program);
+        return Cmd::new(program);
     }
     #[cfg(target_os = "macos")]
     {
-        let mut cmd = Command::new("/usr/sbin/taskpolicy");
-        cmd.arg("-b").arg(program);
-        cmd
+        Cmd::new("/usr/sbin/taskpolicy").arg("-b").arg(program)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -134,7 +132,7 @@ pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Command {
     }
     #[cfg(not(unix))]
     {
-        Command::new(program)
+        Cmd::new(program)
     }
 }
 
@@ -142,16 +140,13 @@ pub fn command(program: impl AsRef<OsStr>, lower: bool) -> Command {
 /// else `nice -n 19 -- <program>`. Extracted so both branches are testable
 /// without depending on whether the runner has `ionice` installed.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn linux_low_priority_command(program: &OsStr, has_ionice: bool) -> Command {
+fn linux_low_priority_command(program: &OsStr, has_ionice: bool) -> Cmd {
     if has_ionice {
-        let mut cmd = Command::new("ionice");
-        cmd.args(["-c", "3", "--", "nice", "-n", "19", "--"])
-            .arg(program);
-        cmd
+        Cmd::new("ionice")
+            .args(["-c", "3", "--", "nice", "-n", "19", "--"])
+            .arg(program)
     } else {
-        let mut cmd = Command::new("nice");
-        cmd.arg("-n").arg("19").arg("--").arg(program);
-        cmd
+        Cmd::new("nice").args(["-n", "19", "--"]).arg(program)
     }
 }
 
@@ -159,8 +154,14 @@ fn linux_low_priority_command(program: &OsStr, has_ionice: bool) -> Command {
 mod tests {
     use super::*;
 
-    fn args_of(cmd: &Command) -> Vec<&str> {
-        cmd.get_args().map(|a| a.to_str().unwrap()).collect()
+    /// The program and arguments `cmd` spawns.
+    fn argv(cmd: Cmd) -> (String, Vec<String>) {
+        let cmd = cmd.into_command().unwrap();
+        let args = cmd.get_args().map(|a| a.to_str().unwrap().to_string());
+        (
+            cmd.get_program().to_str().unwrap().to_string(),
+            args.collect(),
+        )
     }
 
     #[test]
@@ -185,44 +186,37 @@ mod tests {
 
     #[test]
     fn command_no_lower_returns_bare() {
-        let cmd = command("echo", false);
-        assert_eq!(cmd.get_program(), "echo");
-        assert!(args_of(&cmd).is_empty());
+        assert_eq!(argv(command("echo", false)), ("echo".into(), vec![]));
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn command_lower_wraps_in_taskpolicy() {
-        let cmd = command("echo", true);
-        assert_eq!(cmd.get_program(), "/usr/sbin/taskpolicy");
-        assert_eq!(args_of(&cmd), ["-b", "echo"]);
+        let (program, args) = argv(command("echo", true));
+        assert_eq!(program, "/usr/sbin/taskpolicy");
+        assert_eq!(args, ["-b", "echo"]);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn linux_wrap_with_ionice() {
-        let cmd = linux_low_priority_command(OsStr::new("echo"), true);
-        assert_eq!(cmd.get_program(), "ionice");
-        assert_eq!(
-            args_of(&cmd),
-            ["-c", "3", "--", "nice", "-n", "19", "--", "echo"]
-        );
+        let (program, args) = argv(linux_low_priority_command(OsStr::new("echo"), true));
+        assert_eq!(program, "ionice");
+        assert_eq!(args, ["-c", "3", "--", "nice", "-n", "19", "--", "echo"]);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn linux_wrap_without_ionice() {
-        let cmd = linux_low_priority_command(OsStr::new("echo"), false);
-        assert_eq!(cmd.get_program(), "nice");
-        assert_eq!(args_of(&cmd), ["-n", "19", "--", "echo"]);
+        let (program, args) = argv(linux_low_priority_command(OsStr::new("echo"), false));
+        assert_eq!(program, "nice");
+        assert_eq!(args, ["-n", "19", "--", "echo"]);
     }
 
     #[cfg(not(unix))]
     #[test]
     fn command_lower_noop_on_non_unix() {
-        let cmd = command("echo", true);
-        assert_eq!(cmd.get_program(), "echo");
-        assert!(args_of(&cmd).is_empty());
+        assert_eq!(argv(command("echo", true)), ("echo".into(), vec![]));
     }
 
     #[test]

@@ -537,15 +537,11 @@ impl ShellConfig {
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    /// Create a Command configured for shell execution
-    ///
-    /// The command string will be passed to the shell for interpretation.
-    pub fn command(&self, shell_command: &str) -> Command {
+    /// The shell invocation that interprets `shell_command`, before
+    /// [`Cmd::prepare`] adds the working directory and environment.
+    fn command(&self, shell_command: impl AsRef<OsStr>) -> Command {
         let mut cmd = Command::new(&self.executable);
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd.arg(shell_command);
+        cmd.args(&self.args).arg(shell_command);
         cmd
     }
 }
@@ -595,7 +591,7 @@ fn detect_windows_shell() -> Result<ShellConfig, String> {
 fn find_git_bash() -> Option<PathBuf> {
     // Ask Git itself so PATH shims resolve to the installation they launch.
     let git_path = which::which("git").ok()?;
-    let output = Cmd::new(git_path.to_string_lossy())
+    let output = Cmd::new(&git_path)
         .arg("--exec-path")
         .env_remove("GIT_EXEC_PATH") // User overrides name helpers, not the install.
         .run()
@@ -694,13 +690,12 @@ fn shell_cwd_from(inherited: Option<OsString>, fallback: Option<&PathBuf>) -> Op
 /// Scrub all directive file env vars from a `std::process::Command`.
 ///
 /// Prevents child processes from writing to the parent shell's directive
-/// files. Called by every code path that spawns external commands (Cmd,
-/// help pager, picker pager, background hooks, git credential helpers).
+/// files. [`Cmd::prepare`] applies it to every child `wt` starts.
 ///
 /// `WORKTRUNK_SHELL_CWD` goes with them: it is meaningful only to a child that
 /// can act on the shell's position, and those children get it back from
 /// [`apply_cd_directive_env`].
-pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
+fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
     cmd.env_remove(DIRECTIVE_CD_FILE_ENV_VAR);
     cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
     cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
@@ -714,76 +709,10 @@ pub fn scrub_directive_env_vars(cmd: &mut std::process::Command) {
 /// parent shell resolves the user's subdirectory against [`shell_cwd`], and
 /// without it every nested `wt switch` / `wt remove` inside an alias or hook
 /// body would `cd` to a worktree root (issue #3723).
-pub fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::path::Path) {
+fn apply_cd_directive_env(cmd: &mut std::process::Command, cd_file: &std::path::Path) {
     cmd.env(DIRECTIVE_CD_FILE_ENV_VAR, cd_file);
     if let Some(cwd) = shell_cwd() {
         cmd.env(SHELL_CWD_ENV_VAR, cwd);
-    }
-}
-
-/// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from a child
-/// `Command`, so the spawned process discovers its repository from its working
-/// directory rather than a `GIT_DIR`/`GIT_WORK_TREE` that `wt` inherited.
-///
-/// Git resolves these vars **before** walking up from the cwd, so an inherited
-/// value silently overrides whatever working directory the child was given.
-/// Whether a child keeps them is decided by who chose its cwd:
-///
-/// - **`wt` relocated a user command into a worktree it selected** — hooks
-///   (run in the operation's worktree), `wt step for-each` (run in each
-///   worktree in turn), and the `--execute` program (run in the switch target)
-///   — the cwd carries `wt`'s intent, so the inherited context is scrubbed and
-///   the command's `git` calls discover the worktree from the cwd. The inherited
-///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
-///   pinned to the invoking worktree's private gitdir when `wt` runs as a
-///   `!wt` alias from a **linked worktree**, and git itself exports discovery
-///   vars (e.g. `GIT_INDEX_FILE`) to the hooks it spawns. Forwarding those
-///   into a relocated command misdirects every `git` call in it; with both
-///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
-///   `core.worktree` into the *inherited* repo's config, silently redirecting
-///   every later plain git command there. See issue #3373. Detached children
-///   (`spawn_detached_exec`: hook pipelines, trash drains) are relocated the
-///   same way, and outlive the parent, so removing the invoking worktree would
-///   also leave an inherited `GIT_DIR` naming a pruned gitdir.
-///
-/// - **The child runs where the user already was** — aliases (the user's own
-///   top-level command, run from the invoking worktree) and `commit.generation`
-///   commands (spawned with no `current_dir`) — the inherited context *is* the
-///   user's context, so it is forwarded untouched.
-///
-/// - **`wt`'s own git plumbing** splits on the same question. Repo-level
-///   ([`Cmd`] via `Repository::run_command`) keeps the inherited context on
-///   purpose (relative values absolutized, see issue #1914): `wt` honoring
-///   the context it was handed is the point of running `wt` under `git`. Its
-///   cwd is `discovery_path`, which is often but not always where the user
-///   invoked `wt` — `Repository::at` is handed a `wt`-chosen worktree at
-///   several sites (the post-switch hook repo, the pipeline repo, `finish`'s
-///   destination repo, the `pre-remove` render repo). The exemption rests on
-///   scope rather than cwd: repo-level questions are worktree-agnostic within
-///   one repository, and every worktree-scoped answer routes through
-///   [`crate::git::WorkingTree`], which scrubs.
-///   **Worktree-local** plumbing — [`crate::git::WorkingTree::run_command`],
-///   `TempIndex::command`, `WorkingTree`'s prepared diffs,
-///   `list_ignored_entries` — relocates git into a
-///   worktree `wt` resolved, so it scrubs, the same way hooks and `for-each`
-///   do. Otherwise a `!wt` alias from a linked worktree (`GIT_DIR` pinned to
-///   that worktree's private gitdir) makes `status` / `read-tree` on a
-///   *different* worktree use the invoking tree's index.
-///
-/// Every site uses this one list; a site that needs its own value for a
-/// scrubbed var sets it *after* the scrub rather than subsetting the list
-/// ([`Cmd::scrub_git_discovery_env`]). That includes `GIT_OBJECT_DIRECTORY`:
-/// a redirected repository re-sets its own immediately after, so the only
-/// value a worktree-local scrub drops is an **inherited** one — which git
-/// supplies to push-quarantine hooks, and which is pinned to the invoking
-/// context exactly as `GIT_DIR` is. Dropping it is the deliberate call, not
-/// an artifact of reusing the list.
-///
-/// Any new spawn site whose cwd names a `wt`-chosen worktree must apply this
-/// scrub, via this helper or [`Cmd::scrub_git_discovery_env`].
-pub fn scrub_git_discovery_env_vars(cmd: &mut std::process::Command) {
-    for var in INHERITED_GIT_PATH_VARS {
-        cmd.env_remove(var);
     }
 }
 
@@ -826,7 +755,7 @@ pub fn enable_hermetic_test_env() {
 
 /// Apply [`HERMETIC_TEST_GIT_ENV`] to `cmd` if the latch is set. The unlatched
 /// path is production's: one relaxed load, no env writes.
-pub fn apply_hermetic_test_env(cmd: &mut std::process::Command) {
+fn apply_hermetic_test_env(cmd: &mut std::process::Command) {
     if HERMETIC_TEST_ENV_LATCHED.load(Ordering::Relaxed) {
         for (key, val) in HERMETIC_TEST_GIT_ENV {
             cmd.env(key, val);
@@ -1237,12 +1166,14 @@ fn kill_timed_out_tree(pid: u32) {
 /// that detached from it.
 #[cfg(windows)]
 fn kill_timed_out_tree(pid: u32) {
-    let mut command = Command::new("taskkill");
-    command
+    let _ = Cmd::new("taskkill")
         .args(["/T", "/F", "/PID", &pid.to_string()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let _ = spawn(&mut command).and_then(|mut child| child.wait());
+        .into_command()
+        .and_then(|mut command| {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+            spawn(&mut command)
+        })
+        .and_then(|mut child| child.wait());
 }
 
 // ============================================================================
@@ -1286,7 +1217,7 @@ fn kill_timed_out_tree(pid: u32) {
 /// ```
 pub struct Cmd {
     /// Program name or shell command string (if shell_wrap is true)
-    program: String,
+    program: OsString,
     args: Vec<OsString>,
     current_dir: Option<std::path::PathBuf>,
     context: Option<String>,
@@ -1318,7 +1249,7 @@ pub struct Cmd {
     /// The label identifies what triggered the command (e.g., "pre-merge user:lint").
     external_label: Option<String>,
     /// When set, re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` after the security scrub
-    /// in `apply_common_settings`. Used by aliases and foreground hooks — their
+    /// in [`Cmd::prepare`]. Used by aliases and foreground hooks — their
     /// shell bodies may emit cd directives (the file holds a raw path, no shell
     /// injection surface).
     directive_cd_file: Option<std::path::PathBuf>,
@@ -1587,10 +1518,10 @@ fn join_delayed_readers(
 /// Resolved once per name: PATH doesn't change during a run, and the search
 /// stats every `PATHEXT` candidate in every PATH directory.
 #[cfg(windows)]
-fn windows_batch_launcher(program: &str) -> Option<PathBuf> {
+fn windows_batch_launcher(program: &OsStr) -> Option<PathBuf> {
     use std::collections::HashMap;
 
-    static RESOLVED: OnceLock<Mutex<HashMap<String, Option<PathBuf>>>> = OnceLock::new();
+    static RESOLVED: OnceLock<Mutex<HashMap<OsString, Option<PathBuf>>>> = OnceLock::new();
 
     let path = Path::new(program);
     if path.extension().is_some() || path.components().count() != 1 {
@@ -1601,7 +1532,7 @@ fn windows_batch_launcher(program: &str) -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     resolved
-        .entry(program.to_string())
+        .entry(program.to_os_string())
         .or_insert_with(|| {
             which::which(program).ok().filter(|found| {
                 found.extension().is_some_and(|ext| {
@@ -1613,9 +1544,9 @@ fn windows_batch_launcher(program: &str) -> Option<PathBuf> {
 }
 
 impl Cmd {
-    fn builder(program: impl Into<String>, shell_wrap: bool) -> Self {
+    fn builder(program: OsString, shell_wrap: bool) -> Self {
         Self {
-            program: program.into(),
+            program,
             args: Vec::new(),
             current_dir: None,
             context: None,
@@ -1638,8 +1569,8 @@ impl Cmd {
     ///
     /// The program is executed directly without shell interpretation.
     /// For shell commands (with pipes, redirects, etc.), use [`Cmd::shell()`].
-    pub fn new(program: impl Into<String>) -> Self {
-        Self::builder(program, false)
+    pub fn new(program: impl AsRef<OsStr>) -> Self {
+        Self::builder(program.as_ref().to_os_string(), false)
     }
 
     /// Create a command builder for a shell command string.
@@ -1647,18 +1578,20 @@ impl Cmd {
     /// The command is executed through the platform's shell (`sh -c` on Unix,
     /// Git Bash on Windows), enabling shell features like pipes and redirects.
     ///
-    /// Only valid with `.stream()` — shell commands cannot use `.run()`.
+    /// Runs with `.stream()`, or `.into_command()` for a caller's own spawn;
+    /// shell commands cannot use `.run()`.
     pub fn shell(command: impl Into<String>) -> Self {
-        Self::builder(command, true)
+        Self::builder(command.into().into(), true)
     }
 
     fn command_string(&self) -> String {
+        let program = self.program.to_string_lossy();
         if self.shell_wrap || self.args.is_empty() {
-            self.program.clone()
+            program.into_owned()
         } else {
             format!(
                 "{} {}",
-                self.program,
+                program,
                 self.args
                     .iter()
                     .map(|arg| arg.to_string_lossy())
@@ -1668,16 +1601,79 @@ impl Cmd {
         }
     }
 
-    fn direct_command(&self) -> Command {
-        #[cfg(windows)]
-        let mut cmd = match windows_batch_launcher(&self.program) {
-            Some(launcher) => Command::new(launcher),
-            None => Command::new(&self.program),
+    /// The prepared [`std::process::Command`], for a spawn that owns its own
+    /// stdio, process group, signal handling and wait.
+    ///
+    /// [`Cmd`]'s runners build their commands the same way, so a caller's own
+    /// spawn gets the same program resolution and environment as theirs. The
+    /// caller traces it with a [`CommandTrace`] unless it is detached or
+    /// interactive. Only the program, arguments, working directory,
+    /// environment and [`Cmd::directive_cd_file`] carry over; the run options
+    /// (stdin, stdout, timeout, signal forwarding, `external`) belong to the
+    /// runners.
+    ///
+    /// Fails only for [`Cmd::shell`], when no shell is installed.
+    pub fn into_command(self) -> std::io::Result<Command> {
+        debug_assert!(
+            self.stdin_data.is_none()
+                && self.stdin_cfg.is_none()
+                && self.stdout_cfg.is_none()
+                && self.timeout.is_none()
+                && self.forward_signals.is_none()
+                && self.external_label.is_none(),
+            "into_command carries no run options; set them on the Command"
+        );
+        self.prepare()
+    }
+
+    /// Build the command: resolve the program, then set the working directory
+    /// and environment.
+    ///
+    /// On Windows a bare program name may resolve to a batch launcher
+    /// (`windows_batch_launcher`). The environment layers apply in order,
+    /// each able to override the one before:
+    ///
+    /// 1. Inherited relative `GIT_*` path variables (e.g. the `GIT_DIR=.git`
+    ///    git sets for shell aliases) made absolute against the startup cwd,
+    ///    so they don't re-resolve against the child's `current_dir`. See
+    ///    issue #1914.
+    /// 2. The hermetic test floor ([`apply_hermetic_test_env`]).
+    /// 3. The builder's env mutations, in call order.
+    /// 4. The directive scrub ([`scrub_directive_env_vars`]), so no builder
+    ///    call can re-add a directive file, then the CD directive file for a
+    ///    trusted child ([`Cmd::directive_cd_file`]).
+    fn prepare(&self) -> std::io::Result<Command> {
+        let mut cmd = if self.shell_wrap {
+            ShellConfig::get()
+                .map_err(std::io::Error::other)?
+                .command(&self.program)
+        } else {
+            #[cfg(windows)]
+            let program = windows_batch_launcher(&self.program)
+                .map_or_else(|| self.program.clone(), PathBuf::into_os_string);
+            #[cfg(not(windows))]
+            let program = &self.program;
+            Command::new(program)
         };
-        #[cfg(not(windows))]
-        let mut cmd = Command::new(&self.program);
         cmd.args(&self.args);
-        cmd
+        if let Some(dir) = &self.current_dir {
+            cmd.current_dir(dir);
+        }
+        for (key, val) in inherited_git_env_overrides() {
+            cmd.env(key, val);
+        }
+        apply_hermetic_test_env(&mut cmd);
+        for (key, val) in &self.env_ops {
+            match val {
+                Some(val) => cmd.env(key, val),
+                None => cmd.env_remove(key),
+            };
+        }
+        scrub_directive_env_vars(&mut cmd);
+        if let Some(path) = &self.directive_cd_file {
+            apply_cd_directive_env(&mut cmd, path);
+        }
+        Ok(cmd)
     }
 
     /// [`Self::check_spawn_preconditions`], after checking that this thread's
@@ -1689,6 +1685,13 @@ impl Cmd {
             return Err(cancelled_error());
         }
         self.check_spawn_preconditions(command)
+    }
+
+    /// [`Self::prepare`], then [`Self::check_before_spawn`].
+    fn prepare_checked(&self) -> std::io::Result<Command> {
+        let cmd = self.prepare()?;
+        self.check_before_spawn(&cmd)?;
+        Ok(cmd)
     }
 
     fn check_spawn_preconditions(&self, command: &Command) -> std::io::Result<()> {
@@ -1711,37 +1714,6 @@ impl Cmd {
             Ok(())
         })()
         .map_err(|error| spawn_error(command, error))
-    }
-
-    fn apply_common_settings(&self, cmd: &mut Command) {
-        if let Some(dir) = &self.current_dir {
-            cmd.current_dir(dir);
-        }
-
-        // Normalize inherited relative `GIT_*` path variables (e.g. the
-        // `GIT_DIR=.git` git sets for shell aliases) to absolute paths
-        // resolved against the startup cwd, so they don't re-resolve against
-        // the child's `current_dir`. See issue #1914.
-        for (key, val) in inherited_git_env_overrides() {
-            cmd.env(key, val);
-        }
-
-        // Before `self.env_ops`, so a per-command env can override the floor.
-        apply_hermetic_test_env(cmd);
-
-        // In builder-call order, so the last mutation naming a variable wins.
-        for (key, val) in &self.env_ops {
-            match val {
-                Some(val) => cmd.env(key, val),
-                None => cmd.env_remove(key),
-            };
-        }
-
-        // Prevent subprocesses from writing shell directives (security).
-        // Applied last so it can't be re-added by user-provided envs.
-        // `stream()` selectively re-adds `WORKTRUNK_DIRECTIVE_CD_FILE` for
-        // trusted contexts.
-        scrub_directive_env_vars(cmd);
     }
 
     fn log_run_start(&self, cmd_str: &str) {
@@ -1867,21 +1839,68 @@ impl Cmd {
         self
     }
 
-    /// Scrub inherited git-discovery vars ([`INHERITED_GIT_PATH_VARS`]) from the
-    /// child environment. Applied by every spawn site whose `current_dir` names
-    /// a worktree `wt` chose — relocated user commands (hooks, `wt step
-    /// for-each`, the `--execute` program) and `wt`'s own worktree-local
-    /// plumbing ([`crate::git::WorkingTree::run_command`], `TempIndex`) alike —
-    /// so git discovers the repository from that working directory, not a
-    /// `GIT_DIR`/`GIT_WORK_TREE` `wt` inherited. See
-    /// [`scrub_git_discovery_env_vars`] for the site classification (issue #3373).
+    /// Scrub the git-discovery path vars ([`INHERITED_GIT_PATH_VARS`]) from the
+    /// child environment, so the child discovers its repository from its working
+    /// directory rather than a `GIT_DIR`/`GIT_WORK_TREE` that `wt` inherited.
     ///
-    /// Applied after the inherited-`GIT_*` absolutization in
-    /// `apply_common_settings`, so it also drops the relative-path
-    /// absolutization that would otherwise re-add these vars.
+    /// Git resolves these vars **before** walking up from the cwd, so an inherited
+    /// value silently overrides whatever working directory the child was given.
+    /// Whether a child keeps them is decided by who chose its cwd:
     ///
-    /// A site that supplies its own value for one of the scrubbed vars calls
-    /// [`Cmd::env`] *after* this: `env_ops` is call-ordered, so the set wins.
+    /// - **`wt` relocated a user command into a worktree it selected** — hooks
+    ///   (run in the operation's worktree), `wt step for-each` (run in each
+    ///   worktree in turn), and the `--execute` program (run in the switch target)
+    ///   — the cwd carries `wt`'s intent, so the inherited context is scrubbed and
+    ///   the command's `git` calls discover the worktree from the cwd. The inherited
+    ///   context is common, not exotic: `git` exports an absolute `GIT_DIR`
+    ///   pinned to the invoking worktree's private gitdir when `wt` runs as a
+    ///   `!wt` alias from a **linked worktree**, and git itself exports discovery
+    ///   vars (e.g. `GIT_INDEX_FILE`) to the hooks it spawns. Forwarding those
+    ///   into a relocated command misdirects every `git` call in it; with both
+    ///   `GIT_DIR` and `GIT_WORK_TREE` present, a `git init` even writes
+    ///   `core.worktree` into the *inherited* repo's config, silently redirecting
+    ///   every later plain git command there. See issue #3373. Detached children
+    ///   (`spawn_detached_exec`: hook pipelines, trash drains) are relocated the
+    ///   same way, and outlive the parent, so removing the invoking worktree would
+    ///   also leave an inherited `GIT_DIR` naming a pruned gitdir.
+    ///
+    /// - **The child runs where the user already was** — aliases (the user's own
+    ///   top-level command, run from the invoking worktree) and `commit.generation`
+    ///   commands (spawned with no `current_dir`) — the inherited context *is* the
+    ///   user's context, so it is forwarded untouched.
+    ///
+    /// - **`wt`'s own git plumbing** splits on the same question. Repo-level
+    ///   ([`Cmd`] via `Repository::run_command`) keeps the inherited context on
+    ///   purpose (relative values absolutized, see issue #1914): `wt` honoring
+    ///   the context it was handed is the point of running `wt` under `git`. Its
+    ///   cwd is `discovery_path`, which is often but not always where the user
+    ///   invoked `wt` — `Repository::at` is handed a `wt`-chosen worktree at
+    ///   several sites (the post-switch hook repo, the pipeline repo, `finish`'s
+    ///   destination repo, the `pre-remove` render repo). The exemption rests on
+    ///   scope rather than cwd: repo-level questions are worktree-agnostic within
+    ///   one repository, and every worktree-scoped answer routes through
+    ///   [`crate::git::WorkingTree`], which scrubs.
+    ///   **Worktree-local** plumbing — [`crate::git::WorkingTree::run_command`],
+    ///   `TempIndex::command`, `WorkingTree`'s prepared diffs,
+    ///   `list_ignored_entries`, the fsmonitor daemon start — relocates git into a
+    ///   worktree `wt` resolved, so it scrubs, the same way hooks and `for-each`
+    ///   do. Otherwise a `!wt` alias from a linked worktree (`GIT_DIR` pinned to
+    ///   that worktree's private gitdir) makes `status` / `read-tree` on a
+    ///   *different* worktree use the invoking tree's index.
+    ///
+    /// Every site uses this one list; a site that needs its own value for a
+    /// scrubbed var sets it with [`Cmd::env`] *after* the scrub rather than
+    /// subsetting the list (env mutations apply in call order, so the set
+    /// wins). That includes `GIT_OBJECT_DIRECTORY`: a redirected repository
+    /// re-sets its own immediately after, so the only value a worktree-local
+    /// scrub drops is an **inherited** one — which git supplies to
+    /// push-quarantine hooks, and which is pinned to the invoking context
+    /// exactly as `GIT_DIR` is. Dropping it is the deliberate call, not an
+    /// artifact of reusing the list.
+    ///
+    /// The scrub applies after the absolutization of inherited relative
+    /// `GIT_*` paths, so it drops those too. Any new spawn site whose cwd names
+    /// a `wt`-chosen worktree must apply it.
     pub fn scrub_git_discovery_env(mut self) -> Self {
         for var in INHERITED_GIT_PATH_VARS {
             self.env_ops.push((OsString::from(*var), None));
@@ -1986,10 +2005,6 @@ impl Cmd {
             !self.shell_wrap,
             "Cmd::shell() commands must use .stream(), not .run()"
         );
-        debug_assert!(
-            self.directive_cd_file.is_none(),
-            "directive_*_file is only applied by .stream(), not .run()"
-        );
 
         let cmd_str = self.command_string();
         let external_log = ExternalCommandLog::new(self.external_label.clone(), cmd_str.clone());
@@ -2001,14 +2016,14 @@ impl Cmd {
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str)
             .reads_stdin(self.stdin_data.is_some());
 
-        let mut cmd = self.direct_command();
-        self.apply_common_settings(&mut cmd);
-
-        if let Err(e) = self.check_before_spawn(&cmd) {
-            trace.fail(&e);
-            external_log.record(None);
-            return Err(e);
-        }
+        let mut cmd = match self.prepare_checked() {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                trace.fail(&e);
+                external_log.record(None);
+                return Err(e);
+            }
+        };
 
         // Preparation failures and child outcomes resolve the same trace.
         let result = (|| {
@@ -2093,13 +2108,13 @@ impl Cmd {
         self.log_run_start(&cmd_str);
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
 
-        let mut cmd = self.direct_command();
-        self.apply_common_settings(&mut cmd);
-
-        if let Err(e) = self.check_before_spawn(&cmd) {
-            trace.fail(&e);
-            return Err(e);
-        }
+        let mut cmd = match self.prepare_checked() {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                trace.fail(&e);
+                return Err(e);
+            }
+        };
 
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -2166,10 +2181,6 @@ impl Cmd {
             self.external_label.is_none() && next.external_label.is_none(),
             "pipe_into does not support external() logging"
         );
-        debug_assert!(
-            self.directive_cd_file.is_none() && next.directive_cd_file.is_none(),
-            "directive_*_file is only applied by .stream(), not pipe_into"
-        );
 
         let first_cmd_str = self.command_string();
         let second_cmd_str = next.command_string();
@@ -2179,31 +2190,36 @@ impl Cmd {
 
         let _guard = (!is_foreground_thread()).then(|| semaphore().acquire());
 
-        let mut first = self.direct_command();
-        self.apply_common_settings(&mut first);
-        let mut second = next.direct_command();
-        next.apply_common_settings(&mut second);
-
         // Validate both commands before spawning either. Nothing has spawned
         // yet, so a cancellation or precondition failure emits a one-shot
         // failed record rather than holding a guard across an execution that
         // never happens.
-        if let Err(e) = self.check_before_spawn(&first) {
-            // stdin_data is still owned here (taken below), so it reflects
-            // whether the source would have read a buffer; the sink always reads
-            // the upstream pipe.
-            CommandTrace::record_failed(
-                self.context.as_deref(),
-                &first_cmd_str,
-                self.stdin_data.is_some(),
-                &e,
-            );
-            return Err(e);
-        }
-        if let Err(e) = next.check_spawn_preconditions(&second) {
-            CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, true, &e);
-            return Err(e);
-        }
+        let mut first = match self.prepare_checked() {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                // stdin_data is still owned here (taken below), so it reflects
+                // whether the source would have read a buffer; the sink always
+                // reads the upstream pipe.
+                CommandTrace::record_failed(
+                    self.context.as_deref(),
+                    &first_cmd_str,
+                    self.stdin_data.is_some(),
+                    &e,
+                );
+                return Err(e);
+            }
+        };
+        let second = next.prepare().and_then(|cmd| {
+            next.check_spawn_preconditions(&cmd)?;
+            Ok(cmd)
+        });
+        let mut second = match second {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                CommandTrace::record_failed(next.context.as_deref(), &second_cmd_str, true, &e);
+                return Err(e);
+            }
+        };
 
         let source_stdin = self.stdin_data.take();
 
@@ -2332,37 +2348,34 @@ impl Cmd {
             "Cmd::shell() cannot use .arg() - include arguments in the shell command string"
         );
 
-        // Build the command - either shell-wrapped or direct
-        let (mut cmd, exec_mode) = if self.shell_wrap {
-            let shell = ShellConfig::get()?;
-            let mode = format!("shell: {}", shell.name);
-            (shell.command(&self.program), mode)
+        let exec_mode = if self.shell_wrap {
+            format!("shell: {}", ShellConfig::get()?.name)
         } else {
-            (self.direct_command(), "direct".to_string())
+            "direct".to_string()
         };
 
         let cmd_str = self.command_string();
         let external_log = ExternalCommandLog::new(self.external_label.take(), cmd_str.clone());
         self.log_stream_start(&cmd_str, &exec_mode);
-        self.apply_common_settings(&mut cmd);
 
-        // Re-add directive files after security scrub for trusted contexts.
-        // The CD file is safe to pass through because it contains a raw path.
-        if let Some(ref path) = self.directive_cd_file {
-            apply_cd_directive_env(&mut cmd, path);
-        }
-
-        if let Err(e) = self.check_spawn_preconditions(&cmd) {
-            // Nothing spawned yet — emit a one-shot failed record (the trace
-            // guard is constructed just before spawn, below).
-            CommandTrace::record_failed(
-                self.context.as_deref(),
-                &cmd_str,
-                self.stdin_data.is_some(),
-                &e,
-            );
-            return Err(e.into());
-        }
+        let prepared = self.prepare().and_then(|cmd| {
+            self.check_spawn_preconditions(&cmd)?;
+            Ok(cmd)
+        });
+        let mut cmd = match prepared {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                // Nothing spawned yet — emit a one-shot failed record (the
+                // trace guard is constructed just before spawn, below).
+                CommandTrace::record_failed(
+                    self.context.as_deref(),
+                    &cmd_str,
+                    self.stdin_data.is_some(),
+                    &e,
+                );
+                return Err(e.into());
+            }
+        };
 
         #[cfg(not(unix))]
         let _ = self.forward_signals;
@@ -2494,11 +2507,8 @@ impl Cmd {
             "Cmd::delayed_stream() runs a program directly; Cmd::shell() is not supported"
         );
         debug_assert!(
-            self.stdin_data.is_none()
-                && self.timeout.is_none()
-                && self.external_label.is_none()
-                && self.directive_cd_file.is_none(),
-            "delayed_stream does not support stdin/timeout/external/directive options"
+            self.stdin_data.is_none() && self.timeout.is_none() && self.external_label.is_none(),
+            "delayed_stream does not support stdin/timeout/external options"
         );
 
         // Allow tests to override the delay threshold (-1 to disable, 0 for
@@ -2513,13 +2523,12 @@ impl Cmd {
 
         let mut trace = CommandTrace::new(self.context.as_deref(), &cmd_str);
 
-        let mut cmd = self.direct_command();
-        self.apply_common_settings(&mut cmd);
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let child = match spawn_shared_child(&mut cmd) {
+        let child = match self.prepare().and_then(|mut cmd| {
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            spawn_shared_child(&mut cmd)
+        }) {
             Ok(child) => child,
             Err(e) => {
                 trace.fail(&e);
@@ -2893,11 +2902,11 @@ print(*counts)
     /// store — so pin call order rather than the split-vector shape.
     #[test]
     fn test_env_mutations_apply_in_call_order() {
-        let scrubbed = Cmd::new("child")
+        let cmd = Cmd::new("child")
             .scrub_git_discovery_env()
-            .env("GIT_INDEX_FILE", "chosen-index");
-        let mut cmd = std::process::Command::new("child");
-        scrubbed.apply_common_settings(&mut cmd);
+            .env("GIT_INDEX_FILE", "chosen-index")
+            .into_command()
+            .unwrap();
 
         let env = |var: &str| {
             cmd.get_envs()
@@ -2922,11 +2931,11 @@ print(*counts)
         }
 
         // And the reverse order still removes, so `env_remove` isn't inert.
-        let set_then_removed = Cmd::new("child")
+        let cmd = Cmd::new("child")
             .env("GIT_INDEX_FILE", "chosen-index")
-            .scrub_git_discovery_env();
-        let mut cmd = std::process::Command::new("child");
-        set_then_removed.apply_common_settings(&mut cmd);
+            .scrub_git_discovery_env()
+            .into_command()
+            .unwrap();
         assert_eq!(
             cmd.get_envs()
                 .find(|(key, _)| *key == std::ffi::OsStr::new("GIT_INDEX_FILE"))
@@ -3717,7 +3726,7 @@ print(*counts)
     #[test]
     fn test_cmd_run_directory_program_path_is_errored() {
         let dir = crate::testing::tempdir().unwrap();
-        let err = Cmd::new(dir.path().to_string_lossy()).run().unwrap_err();
+        let err = Cmd::new(dir.path()).run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     }
 
@@ -3729,7 +3738,7 @@ print(*counts)
         let file = crate::testing::named_tempfile().unwrap();
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        let err = Cmd::new(file.path().to_string_lossy()).run().unwrap_err();
+        let err = Cmd::new(file.path()).run().unwrap_err();
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     }
 

@@ -29,16 +29,15 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use worktrunk::git::WorktrunkError;
+use worktrunk::shell_exec::Cmd;
 #[cfg(unix)]
 use worktrunk::shell_exec::TerminalInterrupt;
 #[cfg(not(unix))]
 use worktrunk::shell_exec::wait_shared_child;
-use worktrunk::shell_exec::{DIRECTIVE_EXEC_FILE_ENV_VAR, RETIRED_DIRECTIVE_FILE_ENV_VAR};
 #[cfg(unix)]
 use worktrunk::signal_forwarder::ForegroundSignals;
 use worktrunk::trace::CommandTrace;
@@ -48,6 +47,7 @@ use crate::commands::{
     alias_names_for_suggestions, build_invalid_subcommand_error, similar_subcommands, try_alias,
 };
 use crate::enhance_clap_error;
+use crate::output::DirectivePassthrough;
 
 /// Handle a `Commands::Custom` invocation.
 ///
@@ -134,15 +134,16 @@ fn unrecognized_subcommand_error(name: &str) -> clap::Error {
 
 /// Run the custom binary in the native foreground job, preserving handled signals.
 fn run_custom(path: &Path, args: &[OsString], working_dir: Option<&Path>) -> Result<()> {
-    let mut cmd = Command::new(path);
-    cmd.args(args);
-    // Preserve the raw CD directive, but never expose a file that an older
-    // parent wrapper will source as shell code after this process exits.
-    cmd.env_remove(DIRECTIVE_EXEC_FILE_ENV_VAR);
-    cmd.env_remove(RETIRED_DIRECTIVE_FILE_ENV_VAR);
+    let mut cmd = Cmd::new(path).args(args);
     if let Some(dir) = working_dir {
-        cmd.current_dir(dir);
+        cmd = cmd.current_dir(dir);
     }
+    // The CD directive passes through, like an alias's: a custom subcommand
+    // is the user's own top-level command.
+    if let Some(cd_file) = DirectivePassthrough::inherit_from_env().cd_file {
+        cmd = cmd.directive_cd_file(cd_file);
+    }
+    let mut cmd = cmd.into_command()?;
 
     #[cfg(unix)]
     let signals = ForegroundSignals::install(TerminalInterrupt::ChildInput)?;
@@ -302,7 +303,7 @@ mod tests {
             // A SIGTERM child exit cancels every live foreground scope in the
             // process, so a concurrent test's spawn would see it as an
             // interruption. Run this test alone in its own process.
-            let mut command = Command::new(std::env::current_exe().unwrap());
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command
                 .args([
                     "--exact",
