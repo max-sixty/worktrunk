@@ -155,14 +155,15 @@ fn approve_merge_plan(
 }
 
 pub fn handle_merge(opts: MergeOptions<'_>) -> anyhow::Result<()> {
+    let invoking_repo = Repository::current()?;
     // Load config once, run LLM setup prompt if committing, then reuse config
     let mut config = UserConfig::load().context("Failed to load config")?;
-    if opts.flags.commit.unwrap_or(true) {
+    let merge_config = config.merge(invoking_repo.project_identifier().ok().as_ref());
+    if opts.flags.resolve(&merge_config).commit {
         // One-time LLM setup prompt (errors logged internally; don't block merge)
         let _ = crate::output::prompt_commit_generation(&mut config);
     }
 
-    let invoking_repo = Repository::current()?;
     let env = CommandEnv::for_selector(config, opts.branch.unwrap_or("@"))?;
     // Compare actual worktree identity, not whether a selector was supplied:
     // --branch @ and a path naming the current worktree retain normal cleanup.

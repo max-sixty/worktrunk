@@ -1022,6 +1022,52 @@ mod commit_generation_prompt_tests {
         );
     }
 
+    /// Merge offers LLM setup only when it will commit, as resolved from both
+    /// the CLI flags and `[merge] commit` in config.
+    #[rstest]
+    fn test_merge_offers_llm_prompt_only_when_committing(mut repo: TestRepo) {
+        let temp_home = worktrunk::testing::tempdir().unwrap();
+        let bin_dir = setup_fake_tool(temp_home.path(), "claude");
+        let feature = repo.add_feature();
+        fs::write(repo.test_config_path(), "[merge]\ncommit = false\n").unwrap();
+
+        let mut env_vars = repo.test_env_vars();
+        let path = crate::common::setup_minimal_path_with_git(&bin_dir);
+        env_vars.push(("PATH".to_string(), path));
+        let merge = |args: &[&str]| {
+            build_pty_command(
+                wt_bin().to_str().unwrap(),
+                args,
+                &feature,
+                &env_vars,
+                Some(temp_home.path()),
+            )
+        };
+
+        let (output, exit_code) = exec_cmd_in_pty(merge(&["merge", "--no-remove"]), "");
+        assert_eq!(exit_code, 0, "Merge should succeed: {output}");
+        assert!(
+            !output.contains("Configure"),
+            "Config disables committing, so no LLM prompt: {output}"
+        );
+        let config_content = fs::read_to_string(repo.test_config_path()).unwrap();
+        assert!(
+            !config_content.contains("skip-commit-generation-prompt"),
+            "The prompt never ran, so it records nothing: {config_content}"
+        );
+
+        // `--commit` overrides the config, so the same setup prompts.
+        let (output, _) = exec_cmd_in_pty_prompted(
+            merge(&["merge", "--commit", "--no-remove"]),
+            &["n\n"],
+            "[y/N",
+        );
+        assert!(
+            output.contains("Configure") && output.contains("claude"),
+            "Should show LLM config prompt: {output}"
+        );
+    }
+
     /// Test: LLM tool available, user accepts prompt
     #[rstest]
     fn test_user_accepts_llm_prompt(repo: TestRepo) {
