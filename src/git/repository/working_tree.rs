@@ -1417,14 +1417,12 @@ impl<'a> WorkingTree<'a> {
 /// `git write-tree` / `git diff --shortstat`. Doing that against the real
 /// index would mutate the user's staging state. The trick is to copy the
 /// real index, point `GIT_INDEX_FILE` at the copy, and run those
-/// operations there. Today the callers are
-/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (@± with
-/// untracked, used by list and statusline),
-/// the working-tree conflict task (write-tree of tracked changes, for
-/// merge-conflict probing), `wt step diff` (diff vs target merge-base with
-/// untracked), `wt step commit --dry-run` (mirror its `--stage` mode without
-/// changing the user's index), `wt merge` (check whether its `--stage` mode
-/// would produce a commit), and the `wt switch` unified/working preview tabs.
+/// operations there. For example,
+/// [`WorkingTree::working_tree_diff_stats_with_untracked`] (@± with untracked,
+/// used by list and statusline) and the `--dry-run` previews of `wt step
+/// commit` and `wt step squash` (mirror the `--stage` mode without changing
+/// the user's index) build one; the callers of [`WorkingTree::temp_index`] are
+/// the full list.
 pub struct TempIndex {
     temp: PathBuf,
     // Field drop order removes the directory before releasing its owner lock.
