@@ -246,7 +246,7 @@ fn handle_step_command(
                     hooks,
                     args.stage,
                     &mut announcer,
-                    commands::PreApprovedGuidance::RunOwnGate,
+                    commands::commit::PreApprovedGuidance::RunOwnGate,
                 )
                 .and_then(|result| match announcer.flush() {
                     Ok(()) => Ok(result),

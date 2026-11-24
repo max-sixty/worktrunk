@@ -13,28 +13,14 @@ use super::super::command_approval::{
     approve_commit_template_append, approve_or_skip, resolve_template_for_preview,
 };
 use super::super::command_executor::FailureStrategy;
-use super::super::commit::{CommitGenerator, CommitOutcome, HookGate, StageMode};
+use super::super::commit::{
+    CommitGenerator, CommitOutcome, HookGate, PreApprovedGuidance, StageMode,
+};
 use super::super::context::CommandEnv;
 use super::super::hooks::{HookAnnouncer, execute_hook};
 use super::super::repository_ext::auto_stage;
 use super::super::template_vars::TemplateVars;
 use super::shared::print_dry_run;
-
-/// Caller's stance on project commit-message guidance approval.
-///
-/// `wt step squash` runs its own gate (the user invokes squash directly, so
-/// there's no upstream decision to attach to). `wt merge` resolves the append
-/// through its own `approve_commit_template_append` gate up front and passes
-/// the result here so `handle_squash` doesn't gate it a second time.
-#[derive(Debug, Clone)]
-pub enum PreApprovedGuidance {
-    /// No pre-approval — `handle_squash` runs its own gate via
-    /// `approve_commit_template_append` (only if the LLM is configured).
-    RunOwnGate,
-    /// Caller already resolved the guidance through an upstream batch.
-    /// `None` means "guidance not configured or user declined".
-    Resolved(Option<String>),
-}
 
 /// Result of a squash operation
 #[derive(Debug, Clone, serde::Serialize)]

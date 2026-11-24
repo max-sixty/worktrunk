@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context;
 use color_print::cformat;
@@ -73,7 +73,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     render_shell_status(&mut show_output)?;
 
     // Render Claude Code status (only when claude CLI is available)
-    if is_claude_available() {
+    if super::plugins::is_claude_available() {
         show_output.push('\n');
         render_claude_code_status(&mut show_output)?;
     }
@@ -96,7 +96,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     }
 
     // Render oh-my-pi status (only when the oh-my-pi CLI is available)
-    if is_omp_available() {
+    if super::omp::is_omp_available() {
         show_output.push('\n');
         show_output.push_str(&file_plugin_status(
             "OH-MY-PI",
@@ -107,7 +107,7 @@ pub fn handle_config_show(full: bool, format: SwitchFormat) -> anyhow::Result<()
     }
 
     // Render Pi status (only when the Pi CLI is available)
-    if is_pi_available() {
+    if super::pi::is_pi_available() {
         show_output.push('\n');
         show_output.push_str(&file_plugin_status(
             "PI",
@@ -318,15 +318,6 @@ fn parse_project_config_json(
 
 // ==================== Helper Functions ====================
 
-/// Check if Claude Code CLI is available
-pub(super) fn is_claude_available() -> bool {
-    // Allow tests to override detection
-    if let Ok(val) = std::env::var("WORKTRUNK_TEST_CLAUDE_INSTALLED") {
-        return val == "1";
-    }
-    which::which("claude").is_ok()
-}
-
 /// Check if Codex CLI is available
 pub(super) fn is_codex_available() -> bool {
     // Allow tests to override detection
@@ -334,66 +325,6 @@ pub(super) fn is_codex_available() -> bool {
         return val == "1";
     }
     which::which("codex").is_ok()
-}
-
-/// Get the Claude Code config directory.
-///
-/// This locates `settings.json`, the one Claude Code file wt reads. It reads
-/// that file because it writes it: `install-statusline` merges the
-/// `statusLine` key in, and Claude Code has no command that reports the
-/// setting back. Everything else wt wants to know about a harness it asks the
-/// harness (see [`super::harness_listing`]).
-///
-/// Honors `CLAUDE_CONFIG_DIR`, which Claude Code uses to relocate its config
-/// away from the default `~/.claude`. A leading `~` in the value is expanded
-/// against the home directory; the shell normally expands it before the
-/// variable is set, so a literal `~` only reaches us when the variable is set
-/// in a non-shell context.
-pub(super) fn claude_config_dir() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR")
-        && !dir.is_empty()
-    {
-        if dir == "~" {
-            return worktrunk::path::home_dir();
-        }
-        if let Ok(rest) = Path::new(&dir).strip_prefix("~") {
-            return worktrunk::path::home_dir().map(|home| home.join(rest));
-        }
-        return Some(PathBuf::from(dir));
-    }
-    // Claude Code defaults to os.homedir(): USERPROFILE on Windows, not HOME.
-    worktrunk::path::home_dir().map(|home| home.join(".claude"))
-}
-
-/// Whether Claude Code's statusline runs worktrunk's.
-///
-/// The question is which subcommand the configured command invokes, so it's
-/// asked of the adjacent tokens `list statusline` — the binary answers the
-/// same whether it's `wt`, `git-wt`, or an absolute path. Matching on the
-/// binary alone accepted any command that merely spelled `wt ` somewhere
-/// (`newt status`), which reported a foreign statusline as worktrunk's and
-/// left `install-statusline` refusing to install.
-pub(super) fn is_statusline_configured() -> bool {
-    let Some(config_dir) = claude_config_dir() else {
-        return false;
-    };
-
-    let settings_file = config_dir.join("settings.json");
-    let Ok(content) = std::fs::read_to_string(&settings_file) else {
-        return false;
-    };
-
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return false;
-    };
-
-    json.get("statusLine")
-        .and_then(|s| s.get("command"))
-        .and_then(|c| c.as_str())
-        .is_some_and(|cmd| {
-            let tokens: Vec<&str> = cmd.split_whitespace().collect();
-            tokens.windows(2).any(|pair| pair == ["list", "statusline"])
-        })
 }
 
 // ==================== Render Functions ====================
@@ -432,7 +363,7 @@ fn render_claude_code_status(out: &mut String) -> anyhow::Result<()> {
     }
 
     // Statusline status
-    let statusline_configured = is_statusline_configured();
+    let statusline_configured = super::plugins::is_statusline_configured();
     if statusline_configured {
         writeln!(out, "{}", info_message("Statusline configured"))?;
     } else {
@@ -474,22 +405,6 @@ fn is_opencode_available() -> bool {
         return val == "1";
     }
     which::which("opencode").is_ok()
-}
-
-/// Check if the Pi coding agent CLI is available.
-pub(super) fn is_pi_available() -> bool {
-    if let Ok(val) = std::env::var("WORKTRUNK_TEST_PI_INSTALLED") {
-        return val == "1";
-    }
-    which::which("pi").is_ok()
-}
-
-/// Check if the oh-my-pi coding agent CLI is available.
-pub(super) fn is_omp_available() -> bool {
-    if let Ok(val) = std::env::var("WORKTRUNK_TEST_OMP_INSTALLED") {
-        return val == "1";
-    }
-    which::which("omp").is_ok()
 }
 
 /// The section for a plugin the installer writes as a plain file: a heading,

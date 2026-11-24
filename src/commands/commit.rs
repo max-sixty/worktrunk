@@ -60,6 +60,22 @@ impl HookGate {
     }
 }
 
+/// Caller's stance on project commit-message guidance approval.
+///
+/// `wt step squash` runs its own gate (the user invokes squash directly, so
+/// there's no upstream decision to attach to). `wt merge` resolves the append
+/// through its own `approve_commit_template_append` gate up front and passes
+/// the result here so `handle_squash` doesn't gate it a second time.
+#[derive(Debug, Clone)]
+pub enum PreApprovedGuidance {
+    /// No pre-approval — `handle_squash` runs its own gate via
+    /// `approve_commit_template_append` (only if the LLM is configured).
+    RunOwnGate,
+    /// Caller already resolved the guidance through an upstream batch.
+    /// `None` means "guidance not configured or user declined".
+    Resolved(Option<String>),
+}
+
 /// Options for committing current changes.
 pub struct CommitOptions<'a> {
     pub ctx: &'a CommandContext<'a>,
@@ -70,7 +86,7 @@ pub struct CommitOptions<'a> {
     /// Whether `commit()` runs its own guidance approval gate or trusts a
     /// value supplied by the caller (`wt merge` resolves the guidance via
     /// `approve_commit_template_append` up front and passes it through).
-    pub guidance: super::step::PreApprovedGuidance,
+    pub guidance: PreApprovedGuidance,
 }
 
 impl<'a> CommitOptions<'a> {
@@ -81,7 +97,7 @@ impl<'a> CommitOptions<'a> {
             hooks: HookGate::Run,
             stage_mode: StageMode::All,
             show_no_squash_note: false,
-            guidance: super::step::PreApprovedGuidance::RunOwnGate,
+            guidance: PreApprovedGuidance::RunOwnGate,
         }
     }
 }
@@ -274,11 +290,11 @@ impl CommitOptions<'_> {
         // message generator doesn't render the prompt template, so guidance
         // would never reach an LLM anyway.
         let project_append = match self.guidance {
-            super::step::PreApprovedGuidance::Resolved(value) => value,
-            super::step::PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
+            PreApprovedGuidance::Resolved(value) => value,
+            PreApprovedGuidance::RunOwnGate if effective_config.is_configured() => {
                 super::command_approval::approve_commit_template_append(self.ctx)?
             }
-            super::step::PreApprovedGuidance::RunOwnGate => None,
+            PreApprovedGuidance::RunOwnGate => None,
         };
         let outcome = CommitGenerator::new(&effective_config, project_append.as_deref())
             .commit_staged_changes(
