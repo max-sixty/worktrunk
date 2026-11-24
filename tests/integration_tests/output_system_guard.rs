@@ -72,8 +72,6 @@ const STDOUT_ALLOWED_PATHS: &[&str] = &[
     // wt config shell install/uninstall --dry-run preview (the interactive
     // `?` re-preview still goes to stderr)
     "commands/configure_shell.rs",
-    // JSON output for wt switch --format=json
-    "commands/worktree/switch.rs",
     // The WorktreeCreate path that wt config plugins claude hook answers
     // Claude Code with
     "commands/config/plugins.rs",

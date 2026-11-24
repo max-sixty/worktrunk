@@ -3,8 +3,8 @@
 //! Several macros read a file from disk *when the crate compiles*, not at
 //! runtime:
 //!
-//! - `include_str!` / `include_bytes!` — embed `dev/*.example.toml`,
-//!   `dev/opencode-plugin.ts`, `gemini-extension.json`.
+//! - `include_str!` / `include_bytes!` — embed `dev/*.example.toml` and the
+//!   agent plugins under `dev/*.ts`.
 //! - askama's `#[template(path = "…")]` — a proc-macro that reads
 //!   `templates/*` from disk while expanding the derive.
 //!
