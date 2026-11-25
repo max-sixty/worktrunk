@@ -1,4 +1,5 @@
-//! `wt step copy-ignored` — copy gitignored files matching `.worktreeinclude`.
+//! `wt step copy-ignored` — copy gitignored files matching `.worktreeinclude`
+//! or the file `--include-file` names.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,16 +41,18 @@ fn insert_empty_counts(payload: &mut serde_json::Value) {
 /// Handle `wt step copy-ignored` command
 ///
 /// Copies gitignored files from a source worktree to a destination worktree.
-/// If a `.worktreeinclude` file exists, only files matching both `.worktreeinclude`
-/// and gitignore patterns are copied. Without `.worktreeinclude`, all gitignored
-/// files are copied. Uses COW (reflink) when available for efficient copying of
-/// large directories like `target/`.
+/// If the include file (`include_file`, else `.worktreeinclude`) exists, only
+/// files matching both it and gitignore patterns are copied. Without
+/// `.worktreeinclude`, all gitignored files are copied; a missing named file is
+/// an error. Uses COW (reflink) when available for efficient copying of large
+/// directories like `target/`.
 pub fn step_copy_ignored(
     from: Option<&str>,
     to: Option<&str>,
     dry_run: bool,
     force: bool,
     require_include: bool,
+    include_file: Option<&Path>,
     format: crate::cli::SwitchFormat,
 ) -> anyhow::Result<()> {
     // Self-lower only when we're running inside a background hook pipeline
@@ -111,43 +114,61 @@ pub fn step_copy_ignored(
         .map(|wt| wt.path.clone())
         .collect();
 
-    // `--require-include` gate: when passed, copy nothing unless a
-    // `.worktreeinclude` file exists in the source worktree. Checked before
-    // discovery so the `git ls-files --ignored` traversal is skipped entirely
-    // when nothing copies.
-    if require_include && !source_path.join(".worktreeinclude").exists() {
-        if json_mode {
-            let mut payload = serde_json::json!({
-                "outcome": if dry_run { "planned" } else { "copied" },
-                "dry_run": dry_run,
-                "from": source_path,
-                "to": dest_path,
-                "reason": "require-include-no-worktreeinclude",
-                "entries": Vec::<serde_json::Value>::new(),
-            });
-            if !dry_run {
-                insert_empty_counts(&mut payload);
+    // A missing include file means "copy everything", except that
+    // `--require-include` copies nothing, and a missing named file is more
+    // likely a mistyped path than a request for that. Checked before discovery
+    // so the `git ls-files --ignored` traversal is skipped entirely when
+    // nothing copies.
+    let include_path = source_path.join(include_file.unwrap_or(Path::new(".worktreeinclude")));
+    if !include_path.exists() {
+        if require_include {
+            if json_mode {
+                let mut payload = serde_json::json!({
+                    "outcome": if dry_run { "planned" } else { "copied" },
+                    "dry_run": dry_run,
+                    "from": source_path,
+                    "to": dest_path,
+                    "reason": "require-include-no-worktreeinclude",
+                    "entries": Vec::<serde_json::Value>::new(),
+                });
+                if !dry_run {
+                    insert_empty_counts(&mut payload);
+                }
+                return print_json(&payload);
             }
-            return print_json(&payload);
-        } else {
+            let (missing, hint) = match include_file {
+                Some(_) => {
+                    let path = format_path_for_display(&include_path);
+                    let hint = cformat!("Create <underline>{path}</> to select files");
+                    (path, hint)
+                }
+                None => (
+                    ".worktreeinclude".to_string(),
+                    cformat!(
+                        "Add a <underline>.worktreeinclude</> to select files, or drop <underline>--require-include</> to copy everything"
+                    ),
+                ),
+            };
             eprintln!(
                 "{}",
                 info_message(cformat!(
-                    "Nothing copied — <bold>--require-include</> was passed but no <bold>.worktreeinclude</> exists"
+                    "Nothing copied — <bold>--require-include</> was passed but no <bold>{missing}</> exists"
                 ))
             );
-            eprintln!(
-                "{}",
-                hint_message(cformat!(
-                    "Add a <underline>.worktreeinclude</> to select files, or drop <underline>--require-include</> to copy everything"
-                ))
-            );
+            eprintln!("{}", hint_message(hint));
+            return Ok(());
         }
-        return Ok(());
+        if include_file.is_some() {
+            anyhow::bail!(cformat!(
+                "<bold>--include-file {}</> not found; to copy nothing when it is missing, add <bold>--require-include</>",
+                format_path_for_display(&include_path)
+            ));
+        }
     }
 
     let entries_to_copy = list_and_filter_ignored_entries(
         &source_path,
+        &include_path,
         &source_context,
         &worktree_paths,
         &copy_ignored_config.exclude,

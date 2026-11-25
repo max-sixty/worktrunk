@@ -5,7 +5,7 @@
 //!   used by `copy_ignored` and `promote`.
 
 use std::collections::HashSet;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -96,8 +96,9 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
     Ok(config)
 }
 
-/// List gitignored entries in a worktree, filtered by `.worktreeinclude` and excluding
-/// configured patterns, VCS metadata directories, and other worktrees.
+/// List gitignored entries in a worktree, filtered by the include file at
+/// `include_path` and excluding configured patterns, VCS metadata directories,
+/// and other worktrees.
 ///
 /// Git decides both what is ignored and what `.worktreeinclude` selects:
 /// [`list_ignored_entries`] runs once with git's standard exclude sources and,
@@ -121,16 +122,17 @@ pub(super) fn resolve_copy_ignored_config(repo: &Repository) -> anyhow::Result<C
 /// directories, and other worktrees.
 pub(super) fn list_and_filter_ignored_entries(
     worktree_path: &Path,
+    include_path: &Path,
     context: &str,
     worktree_paths: &[PathBuf],
     exclude_patterns: &[String],
 ) -> anyhow::Result<Vec<(PathBuf, bool)>> {
     let ignored = list_ignored_entries(worktree_path, context, &["--exclude-standard"])?;
-    let include_path = worktree_path.join(".worktreeinclude");
-    let entries = match fs::read_to_string(&include_path) {
+    let entries = match fs::read_to_string(include_path) {
         Ok(lines) => {
-            let included =
-                list_ignored_entries(worktree_path, context, &["--exclude-from=.worktreeinclude"])?;
+            let mut include_from = OsString::from("--exclude-from=");
+            include_from.push(include_path);
+            let included = list_ignored_entries(worktree_path, context, &[&include_from])?;
             // Git skips a leading byte-order mark, so the first line is read without it.
             let lines = lines.strip_prefix('\u{feff}').unwrap_or(&lines);
             let named = if lines.lines().any(names_path) {
@@ -158,7 +160,7 @@ pub(super) fn list_and_filter_ignored_entries(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => ignored,
         Err(error) => {
             return Err(error).with_context(|| {
-                format!("Failed to read {}", format_path_for_display(&include_path))
+                format!("Failed to read {}", format_path_for_display(include_path))
             });
         }
     };
@@ -331,12 +333,13 @@ fn relative_entry<'a>(path: &'a Path, worktree_path: &Path) -> &'a Path {
 fn list_ignored_entries(
     worktree_path: &Path,
     context: &str,
-    excludes: &[&str],
+    excludes: &[impl AsRef<OsStr>],
 ) -> anyhow::Result<Vec<(std::path::PathBuf, bool)>> {
-    let args: Vec<&str> = ["ls-files", "-z", "--ignored"]
+    let args: Vec<&OsStr> = ["ls-files", "-z", "--ignored"]
         .into_iter()
-        .chain(excludes.iter().copied())
-        .chain(["-o", "--directory"])
+        .map(OsStr::new)
+        .chain(excludes.iter().map(AsRef::as_ref))
+        .chain(["-o", "--directory"].map(OsStr::new))
         .collect();
     let output = Cmd::new("git")
         .args(&args)

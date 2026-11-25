@@ -69,7 +69,12 @@ Usage: [1m[36mwt step copy-ignored[0m [36m[OPTIONS][0m
           Overwrite existing files in destination
 
       [1m[36m--require-include[0m
-          Require .worktreeinclude to copy anything
+          Require the include file (.worktreeinclude by default) to copy anything
+
+      [1m[36m--include-file[0m[36m [0m[36m<PATH>[0m
+          Read include patterns from this file instead of .worktreeinclude[0m
+          
+          Relative to the source worktree. A missing file is an error unless --require-include is also passed.[0m
 
   [1m[36m-h[0m, [1m[36m--help[0m
           Print help (see a summary with '-h')
@@ -138,6 +143,11 @@ To copy nothing unless [2m.worktreeinclude[0m exists — matching Claude Code 
 [107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--require-include[0m
 
 Without [2m.worktreeinclude[0m, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: [2mpost-start = "wt step copy-ignored --require-include"[0m.
+
+To read the patterns from another file, pass [2m--include-file[0m. A relative path resolves against the source worktree, and the file replaces [2m.worktreeinclude[0m for that run, with the same syntax. Its patterns are anchored at the worktree root, as in [2m.worktreeinclude[0m, not at the file's own directory. A missing named file is an error, unless [2m--require-include[0m is also passed, in which case nothing copies. Claude Code also reads [2m.worktreeinclude[0m and copies matches in full, so large caches that should only
+ be reflinked can go in a separate file:
+
+[107m [0m [2m[0m[2m[34mwt[0m[2m step copy-ignored [0m[2m[36m--include-file[0m[2m .config/worktree-caches [0m[2m[36m--require-include[0m
 
 [1m[32mCommon patterns[0m
 
