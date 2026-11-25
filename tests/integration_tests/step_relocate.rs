@@ -1339,7 +1339,7 @@ fn test_relocate_template_error_counted_in_summary(repo: TestRepo) {
 /// branch that does not exist locally. `Repository::default_branch()`
 /// trusts the persisted value (validation happens downstream), so
 /// `wt step relocate` proceeds into `move_main_worktree`, which tries
-/// `git checkout <nonexistent-branch>`. Before the fix, `Cmd::run()`
+/// `git switch <nonexistent-branch>`. Before the fix, `Cmd::run()`
 /// returned `Ok(Output { status: non-zero, .. })` and the `?` operator
 /// didn't propagate it, so relocate printed "Relocated main ..." even
 /// though nothing happened.

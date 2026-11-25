@@ -64,7 +64,8 @@ pub struct GatherResult {
     pub template_error_branches: Vec<String>,
 }
 
-/// A candidate that passed pre-checks (not locked, not dirty or committed).
+/// A candidate that passed pre-checks: not locked, and either clean, committed
+/// with `--commit`, or a dirty linked worktree that `git worktree move` carries.
 pub struct ValidatedCandidate {
     pub wt: WorktreeInfo,
     pub expected_path: PathBuf,
@@ -113,7 +114,7 @@ pub struct SkippedEntry {
 /// Git commands route through `repo.worktree_at(path).run_command(...)` rather
 /// than raw `Cmd::new("git").run()`. `Cmd::run()` returns `Ok(Output)` on
 /// non-zero exit — only spawn errors travel through `?` — so raw `.run()`
-/// would silently swallow a failed `git worktree move` / `git checkout` and
+/// would silently swallow a failed `git worktree move` / `git switch` and
 /// let the caller print a false "Relocated ..." success message.
 pub struct RelocationExecutor<'a> {
     repo: &'a Repository,
@@ -149,7 +150,8 @@ impl RelocationExecutor<'_> {
 
 /// Find worktrees that are not at their expected paths.
 ///
-/// Returns candidates for relocation plus a count of template errors encountered.
+/// Returns candidates for relocation plus the branches whose path template
+/// failed to render.
 pub fn gather_candidates(
     repo: &Repository,
     config: &UserConfig,

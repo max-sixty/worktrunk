@@ -98,7 +98,7 @@ pub const PROMPT_SYMBOL: &str = cstr!("<cyan>❯</>");
 
 use std::fmt;
 
-/// A message that has already been formatted with emoji and styling.
+/// A message that has already been formatted with its symbol and styling.
 ///
 /// This type provides compile-time prevention of double-formatting. Message
 /// functions like `error_message()` take `impl AsRef<str>` and return
@@ -227,7 +227,8 @@ pub fn prompt_message(content: impl AsRef<str>) -> FormattedMessage {
     FormattedMessage(cformat!("{PROMPT_SYMBOL} <cyan>{}</>", content.as_ref()))
 }
 
-/// Format a section heading (cyan uppercase text, no emoji)
+/// Format a section heading (cyan text, no symbol; callers pass the title in
+/// uppercase)
 ///
 /// Used for organizing output into distinct sections. Headings can have
 /// optional suffix info (e.g., path, location).
