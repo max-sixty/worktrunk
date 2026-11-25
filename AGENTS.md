@@ -84,7 +84,7 @@ Project hooks, aliases, and --execute commands are arbitrary code. Gate them thr
 
 ### Background Hook Pipelines Run Concurrently, Per Source
 
-A post-hook batch spawns one detached pipeline per source. A source can run indefinitely, so do not serialize independent sources. HookAnnouncer marks an anchor worktree removed before flush, preventing a hook from running in a path that no longer resolves to that worktree. See src/commands/process.rs.
+A post-hook batch spawns one detached pipeline per source. A source can run indefinitely, so do not serialize independent sources. HookAnnouncer marks an anchor worktree removed before flush, preventing a hook from running in a path that no longer resolves to that worktree. See src/commands/hooks.rs and src/commands/process.rs.
 
 ## Coverage
 
