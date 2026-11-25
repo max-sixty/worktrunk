@@ -1309,12 +1309,45 @@ fn test_list_full_with_azure_passed_pipeline(mut repo: TestRepo) {
         "id": 4242,
         "status": "completed",
         "result": "succeeded",
-        "sourceVersion": "{}"
+        "sourceVersion": "{}",
+        "repository": {{"id": "1111", "type": "TfsGit", "name": "test-repo"}}
     }}]"#,
         head_sha
     );
 
     run_azure_ci_status_test(&mut repo, "azure_pipeline_passed", "[]", &runs_json);
+}
+
+/// `az pipelines runs list` has no repository filter, so a project's runs on a
+/// same-named branch arrive from every repository in it. A newer run from a
+/// sibling repository must not stand in for this repository's own run.
+#[rstest]
+fn test_list_full_azure_pipeline_skips_sibling_repository(mut repo: TestRepo) {
+    let head_sha = setup_azure_repo_with_feature(&mut repo);
+
+    let runs_json = format!(
+        r#"[{{
+        "id": 5000,
+        "status": "completed",
+        "result": "failed",
+        "sourceVersion": "0000000000000000000000000000000000000000",
+        "repository": {{"id": "2222", "type": "TfsGit", "name": "other-repo"}}
+    }}, {{
+        "id": 4242,
+        "status": "completed",
+        "result": "succeeded",
+        "sourceVersion": "{}",
+        "repository": {{"id": "1111", "type": "TfsGit", "name": "test-repo"}}
+    }}]"#,
+        head_sha
+    );
+
+    run_azure_ci_status_test(
+        &mut repo,
+        "azure_pipeline_skips_sibling_repository",
+        "[]",
+        &runs_json,
+    );
 }
 
 /// A pipeline run from a different SHA than local HEAD is marked stale (dimmed).
@@ -1326,7 +1359,8 @@ fn test_list_full_with_azure_stale_pipeline(mut repo: TestRepo) {
         "id": 4242,
         "status": "completed",
         "result": "succeeded",
-        "sourceVersion": "0000000000000000000000000000000000000000"
+        "sourceVersion": "0000000000000000000000000000000000000000",
+        "repository": {"id": "1111", "type": "TfsGit", "name": "test-repo"}
     }]"#;
 
     run_azure_ci_status_test(&mut repo, "azure_stale_pipeline", "[]", runs_json);

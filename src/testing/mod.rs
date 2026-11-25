@@ -2835,7 +2835,8 @@ impl TestRepo {
     ///   should include `pullRequestId`, optionally `mergeStatus`,
     ///   `lastMergeSourceCommit.commitId`, and `repository.{name,project.name}`.
     /// * `runs_json` - JSON for `az pipelines runs list --output json`. Each entry
-    ///   should include `id`, optionally `status`, `result`, and `sourceVersion`.
+    ///   should include `id` and `repository.name` (runs from another repository
+    ///   are skipped), optionally `status`, `result`, and `sourceVersion`.
     pub fn setup_mock_az_with_ci_data(&mut self, pr_list_json: &str, runs_json: &str) {
         let mock_bin = self.temp_dir.path().join("mock-bin");
         std::fs::create_dir_all(&mock_bin).unwrap();
