@@ -135,7 +135,10 @@ jobs:
     # zsh/fish and probe nushell; match the test matrix's shell setup
     # (.github/actions/test-setup) so those combinations run, not just compile.
     - name: Install shells (zsh, fish)
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # Bounded like .github/actions/tend-setup's copy.
+      run: |
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y zsh fish
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
@@ -186,13 +189,13 @@ jobs:
       if: matrix.git == '2.43.0'
       shell: bash
       run: |
-        sudo apt-get update
+        sudo timeout -k 30 300 apt-get update
         git_package_version="$(apt-cache madison git | awk '$3 ~ /^1:2[.]43[.]0-/ { print $3; exit }')"
         if [ -z "$git_package_version" ]; then
           echo "::error::Ubuntu package sources do not provide Git 2.43.0"
           exit 1
         fi
-        sudo apt-get install -y --allow-downgrades \
+        sudo timeout -k 30 300 apt-get install -y --allow-downgrades \
           "git=$git_package_version" "git-man=$git_package_version"
         echo "/usr/bin" >> "$GITHUB_PATH"
 
@@ -262,7 +265,9 @@ jobs:
 
     - name: Install musl-tools
       if: matrix.install == 'musl-tools'
-      run: sudo apt-get update && sudo apt-get install -y musl-tools
+      run: |
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y musl-tools
 
     - uses: ./.github/actions/test-setup
       with:

@@ -51,7 +51,10 @@ jobs:
         save-if: ${{ github.ref == 'refs/heads/main' }}
 
     - name: Install shells (zsh, fish)
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # Bounded like .github/actions/tend-setup's copy.
+      run: |
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y zsh fish
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3
