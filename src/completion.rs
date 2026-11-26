@@ -1092,7 +1092,7 @@ mod tests {
 
         // Multi-byte chars where byte 57 falls mid-character.
         // 'a' (1 byte) × 56 + '€' (3 bytes) × 2 = 62 bytes, > 60.
-        // Byte 57 is the second byte of the first '€', so the loop backs up to 56.
+        // Byte 57 is the second byte of the first '€', so `floor_char_boundary` backs up to 56.
         let multi = "a".repeat(56) + "€€";
         let result = truncate_template(&multi);
         assert_eq!(result.len(), 56);
