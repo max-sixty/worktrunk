@@ -345,7 +345,8 @@ fn test_for_each_stops_on_caught_ctrl_c(repo: TestRepo) {
     let marker_dir = worktrunk::testing::tempdir().unwrap();
     let pid_file = marker_dir.path().join("pid");
     let script = format!(
-        "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; while :; do sleep 0.1; done",
+        "trap 'exit 0' INT; touch {dir}/\"$(basename \"$PWD\")\"; echo $$ > {pid}; {wait}",
+        wait = crate::common::sigint_observable_wait("0.1"),
         dir = shell_escape::unix::escape(marker_dir.path().join("visited").to_string_lossy()),
         pid = shell_escape::unix::escape(pid_file.to_string_lossy()),
     );

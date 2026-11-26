@@ -1436,7 +1436,7 @@ fn test_alias_group_sigint_does_not_escalate(
 #[cfg(unix)]
 fn test_alias_last_step_keeps_status_after_caught_ctrl_c(repo: TestRepo) {
     repo.write_test_config(
-        "[aliases]\nsignal-test = \"trap 'echo handled > int; while [ ! -e release ]; do sleep 0.01; done; exit 0' INT; echo $$ > pid; while :; do sleep 0.1; done\"\n",
+        "[aliases]\nsignal-test = \"trap 'echo handled > int; while [ ! -e release ]; do sleep 0.01; done; exit 0' INT; echo $$ > pid; while :; do sleep 0.1 & wait $!; done\"\n",
     );
     let stderr_path = repo.root_path().join("stderr");
     let stderr = std::fs::File::create(&stderr_path).unwrap();
