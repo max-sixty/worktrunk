@@ -1407,8 +1407,9 @@ fn test_remove_interrupt_stops_batch(
 fn test_remove_ctrl_c_caught_by_hook_stops_batch(mut repo: TestRepo, #[case] hook_exit: i32) {
     let pid_file = repo.root_path().join("hook-pid");
     let hook = format!(
-        "trap 'exit {hook_exit}' INT; echo $$ > {}; while :; do sleep 0.1; done",
-        shell_escape::unix::escape(pid_file.to_string_lossy())
+        "trap 'exit {hook_exit}' INT; echo $$ > {}; {}",
+        shell_escape::unix::escape(pid_file.to_string_lossy()),
+        crate::common::sigint_observable_wait("0.1"),
     );
     repo.write_project_config(&format!("pre-remove = {hook:?}"));
     repo.commit("Add pre-remove hook that catches Ctrl-C");

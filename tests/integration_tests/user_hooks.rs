@@ -665,7 +665,7 @@ fn test_pre_merge_pipeline_aborts_on_signal_exit(repo: TestRepo) {
 fn test_post_start_pipeline_stops_on_caught_ctrl_c(repo: TestRepo) {
     repo.write_project_config(
         r#"post-start = [
-    "trap 'exit 130' INT; echo $$ > hook-pid; while :; do sleep 0.1; done",
+    "trap 'exit 130' INT; echo $$ > hook-pid; while :; do sleep 0.1 & wait $!; done",
     "echo after > after.log",
 ]
 "#,
