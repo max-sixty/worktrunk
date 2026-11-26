@@ -15,6 +15,7 @@
 //! read/write/clear mechanics, torn-write semantics, and the
 //! user-initiated clear error policy.
 
+#[cfg(unix)]
 use std::path::PathBuf;
 
 use super::Repository;
@@ -69,16 +70,17 @@ pub(super) fn merge_conflicts(repo: &Repository, sha1: &str, sha2: &str) -> Opti
     cache::read(repo, KIND_MERGE_TREE_CONFLICTS, &symmetric_key(sha1, sha2))
 }
 
-/// Store a `has_merge_conflicts_by_sha(sha1, sha2)` result, triggering an LRU
-/// sweep if the per-kind entry bound is exceeded.
 /// Path of the persistent conflict bit for this SHA pair.
 ///
 /// The merge-tree supervisor writes this file itself, so a probe abandoned
 /// by process exit still leaves the result `run_merge_tree` would have stored.
+#[cfg(unix)]
 pub(super) fn merge_conflicts_path(repo: &Repository, sha1: &str, sha2: &str) -> PathBuf {
     cache::cache_dir(repo, KIND_MERGE_TREE_CONFLICTS).join(symmetric_key(sha1, sha2))
 }
 
+/// Store a `has_merge_conflicts_by_sha(sha1, sha2)` result, triggering an LRU
+/// sweep if the per-kind entry bound is exceeded.
 pub(super) fn put_merge_conflicts(repo: &Repository, sha1: &str, sha2: &str, value: bool) {
     cache::write_with_lru(
         repo,

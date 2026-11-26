@@ -285,6 +285,19 @@ impl Repository {
     /// collapses both — and any cross-row repeat of the same pair — to a single
     /// spawn, mirroring [`Self::merge_base_by_sha`].
     fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+        self.merge_tree_outcome_for_cache(a, b, a, b)
+    }
+
+    /// Like [`Self::merge_tree_outcome`], but the on-disk conflict bit is stored
+    /// under `(cache_a, cache_b)`. That pair matches the git arguments except
+    /// for a dirty worktree, whose merge-tree commit is ephemeral.
+    fn merge_tree_outcome_for_cache(
+        &self,
+        a: &str,
+        b: &str,
+        cache_a: &str,
+        cache_b: &str,
+    ) -> anyhow::Result<MergeTreeOutcome> {
         use dashmap::mapref::entry::Entry;
 
         // Keyed in call order, not normalized: both dedup call sites pass
@@ -294,7 +307,7 @@ impl Repository {
         match self.cache.merge_tree.entry((a.to_string(), b.to_string())) {
             Entry::Occupied(e) => Ok(e.get().clone()),
             Entry::Vacant(e) => {
-                let outcome = self.compute_merge_tree_outcome(a, b)?;
+                let outcome = self.compute_merge_tree_outcome(a, b, cache_a, cache_b)?;
                 Ok(e.insert(outcome).clone())
             }
         }
@@ -304,7 +317,15 @@ impl Repository {
     /// by exit code. Exit 1 → [`MergeTreeOutcome::Conflict`]; anything other
     /// than success is an error; exit 0 → [`MergeTreeOutcome::Clean`] with the
     /// resulting tree SHA (first line of stdout).
-    fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+    fn compute_merge_tree_outcome(
+        &self,
+        a: &str,
+        b: &str,
+        cache_a: &str,
+        cache_b: &str,
+    ) -> anyhow::Result<MergeTreeOutcome> {
+        #[cfg(not(unix))]
+        let _ = (cache_a, cache_b);
         // Exit codes: 0 = clean merge, 1 = conflicts (git also uses 1 for
         // unresolvable args — callers pass pre-resolved commit SHAs, see
         // `run_merge_tree`), anything else = error (corrupt repo, bad usage).
@@ -315,22 +336,24 @@ impl Repository {
         // when this process stops waiting (#4585).
         #[cfg(unix)]
         let output = {
-            let cache_file = super::sha_cache::merge_conflicts_path(self, a, b);
+            // The on-disk key is the caller's cache pair, not the commits fed
+            // to merge-tree. A dirty worktree probes an ephemeral commit but
+            // stores the result under `branch_head+tree`.
+            let cache_file = super::sha_cache::merge_conflicts_path(self, cache_a, cache_b);
             // `sh` is the parent of `git merge-tree`, in its own process group.
             // It writes the conflict bit, then exits with git's status, so a
             // caller that stops waiting still leaves the cache behind.
-            let script = "\
-out=$(git merge-tree --write-tree \"$1\" \"$2\")
+            let script = r#"out=$(git merge-tree --write-tree "$1" "$2")
 status=$?
-mkdir -p \"$(dirname \"$3\")\"
-if [ \"$status\" -eq 0 ]; then
-  printf '%s' false > \"$3\"
-elif [ \"$status\" -eq 1 ]; then
-  printf '%s' true > \"$3\"
+mkdir -p "$(dirname "$3")"
+if [ "$status" -eq 0 ]; then
+  printf '%s' false > "$3"
+elif [ "$status" -eq 1 ]; then
+  printf '%s' true > "$3"
 fi
-printf '%s\\n' \"$out\"
-exit \"$status\"
-";
+printf '%s\n' "$out"
+exit "$status"
+"#;
             self.with_object_store_env(
                 Cmd::new("sh")
                     .args(["-c", script, "merge-tree", a, b])
@@ -390,7 +413,7 @@ exit \"$status\"
         }
 
         let conflicts = matches!(
-            self.merge_tree_outcome(base_sha, head_sha)?,
+            self.merge_tree_outcome_for_cache(base_sha, head_sha, cache_base, cache_head)?,
             MergeTreeOutcome::Conflict
         );
         super::sha_cache::put_merge_conflicts(self, cache_base, cache_head, conflicts);
@@ -1333,7 +1356,9 @@ mod merge_tree_error_tests {
         let repo = Repository::at(test.root_path()).unwrap();
         std::fs::write(test.root_path().join(".git/config"), "[bad\n").unwrap();
 
-        let err = repo.compute_merge_tree_outcome("HEAD", "HEAD").unwrap_err();
+        let err = repo
+            .compute_merge_tree_outcome("HEAD", "HEAD", "HEAD", "HEAD")
+            .unwrap_err();
         let cmd_err =
             crate::git::CommandError::find_in(&err).expect("error should carry a CommandError");
         assert_eq!(
