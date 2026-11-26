@@ -1256,6 +1256,9 @@ pub struct Cmd {
     /// If true, cancellation stops this command from spawning but never
     /// signals it once running. Set via [`Cmd::finish_once_started`].
     finish_once_started: bool,
+    /// If true, the child starts in a new process group so a terminal key or
+    /// the parent's exit does not signal it. Set via [`Cmd::own_process_group`].
+    own_process_group: bool,
 }
 
 struct ExternalCommandLog {
@@ -1562,6 +1565,7 @@ impl Cmd {
             external_label: None,
             directive_cd_file: None,
             finish_once_started: false,
+            own_process_group: false,
         }
     }
 
@@ -1812,6 +1816,16 @@ impl Cmd {
         self
     }
 
+    /// Start the child in its own process group.
+    ///
+    /// A terminal Ctrl-C and the parent's exit signal the caller's group.
+    /// A child that must finish that work anyway — and record its result —
+    /// cannot stay in that group. No-op on Windows. Only affects `.run()`.
+    pub fn own_process_group(mut self) -> Self {
+        self.own_process_group = true;
+        self
+    }
+
     /// [`track_if_cancellable`], unless [`Cmd::finish_once_started`] opted out.
     fn track_if_cancellable(&self, pid: u32) -> Option<BackgroundPid> {
         (!self.finish_once_started)
@@ -2036,6 +2050,11 @@ impl Cmd {
             cmd.stdin(stdin)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            #[cfg(unix)]
+            if self.own_process_group {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
             if let Some(timeout) = self.timeout {
                 run_with_timeout_impl(&mut cmd, timeout, !self.finish_once_started)
             } else {

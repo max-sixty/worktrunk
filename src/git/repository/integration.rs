@@ -307,12 +307,46 @@ impl Repository {
     fn compute_merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
         // Exit codes: 0 = clean merge, 1 = conflicts (git also uses 1 for
         // unresolvable args — callers pass pre-resolved commit SHAs, see
-        // `run_merge_tree`), anything else = error (corrupt repo, bad usage)
-        let args = ["merge-tree", "--write-tree", a, b];
-        // Not signalled on picker exit: a merge driver interrupted mid-run
-        // strands `.merge_file_*` temp files in the worktree (#4273).
-        let output = self
-            .with_object_store_env(
+        // `run_merge_tree`), anything else = error (corrupt repo, bad usage).
+        //
+        // The probe runs in its own process group and writes the conflict bit
+        // before it exits. Cancellation does not signal it (#4273: a killed
+        // merge driver strands `.merge_file_*`), and the bit is on disk even
+        // when this process stops waiting (#4585).
+        #[cfg(unix)]
+        let output = {
+            let cache_file = super::sha_cache::merge_conflicts_path(self, a, b);
+            // `sh` is the parent of `git merge-tree`, in its own process group.
+            // It writes the conflict bit, then exits with git's status, so a
+            // caller that stops waiting still leaves the cache behind.
+            let script = "\
+out=$(git merge-tree --write-tree \"$1\" \"$2\")
+status=$?
+mkdir -p \"$(dirname \"$3\")\"
+if [ \"$status\" -eq 0 ]; then
+  printf '%s' false > \"$3\"
+elif [ \"$status\" -eq 1 ]; then
+  printf '%s' true > \"$3\"
+fi
+printf '%s\\n' \"$out\"
+exit \"$status\"
+";
+            self.with_object_store_env(
+                Cmd::new("sh")
+                    .args(["-c", script, "merge-tree", a, b])
+                    .arg(&cache_file)
+                    .current_dir(&self.discovery_path)
+                    .context(self.logging_context())
+                    .finish_once_started()
+                    .own_process_group(),
+            )
+            .run()
+            .with_context(|| format!("Failed to execute: git merge-tree --write-tree {a} {b}"))?
+        };
+        #[cfg(not(unix))]
+        let output = {
+            let args = ["merge-tree", "--write-tree", a, b];
+            self.with_object_store_env(
                 Cmd::new("git")
                     .args(args)
                     .current_dir(&self.discovery_path)
@@ -320,12 +354,14 @@ impl Repository {
                     .finish_once_started(),
             )
             .run()
-            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?;
+            .with_context(|| format!("Failed to execute: git {}", args.join(" ")))?
+        };
 
         if output.status.code() == Some(1) {
             return Ok(MergeTreeOutcome::Conflict);
         }
         if !output.status.success() {
+            let args = ["merge-tree", "--write-tree", a, b];
             return Err(crate::git::CommandError::from_failed_output("git", &args, &output).into());
         }
 
@@ -1465,6 +1501,16 @@ mod merge_tree_cache_tests {
                 "a running merge-tree must not be a cancellation target"
             );
             assert!(matches!(outcome, MergeTreeOutcome::Conflict));
+            let cached = std::fs::read_to_string(super::super::sha_cache::merge_conflicts_path(
+                &repo,
+                &main_sha,
+                &feature_sha,
+            ))
+            .unwrap();
+            assert_eq!(
+                cached, "true",
+                "the probe must record the conflict bit before it exits"
+            );
         });
     }
 }
