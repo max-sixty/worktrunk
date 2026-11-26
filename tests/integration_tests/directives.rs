@@ -140,7 +140,8 @@ fn test_switch_directive_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     });
 }
 
-/// A failed CD-directive write names the file too, for the same reason.
+/// A failed CD-directive write names the file: the shell wrapper chose the
+/// path, and the switch has already completed by the time the write runs.
 #[rstest]
 fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut repo: TestRepo) {
     let _feature_wt = repo.add_worktree("feature");
@@ -162,7 +163,11 @@ fn test_cd_directive_write_failure_names_the_file(#[from(repo_with_remote)] mut 
     );
     assert!(
         stderr.contains("Failed to write the cd directive file"),
-        "the error must name the write and the file.\nstderr:\n{stderr}"
+        "the error must name the write.\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("no-such-dir"),
+        "the error must name the file.\nstderr:\n{stderr}"
     );
 }
 
@@ -834,7 +839,7 @@ fn test_switch_preserves_symlink_path_from_subdirectory(
 #[rstest]
 fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: TestRepo) {
     // When PWD matches current_dir (no symlink), canonical path is used as before
-    let _feature_wt = repo.add_worktree("feature");
+    let feature_wt = repo.add_worktree("feature");
     let (cd_path, _guard) = directive_file();
 
     let canonical_cwd = dunce::canonicalize(repo.root_path()).unwrap();
@@ -853,11 +858,10 @@ fn test_switch_no_symlink_uses_canonical(#[from(repo_with_remote)] mut repo: Tes
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // Should still have a path in the cd file (just with canonical path)
     let cd_content = fs::read_to_string(&cd_path).unwrap_or_default();
-    assert!(
-        !cd_content.trim().is_empty(),
-        "CD file should contain a path, got: {}",
-        cd_content
+    assert_eq!(
+        Path::new(cd_content.trim()),
+        dunce::canonicalize(&feature_wt).unwrap(),
+        "CD file should contain the feature worktree's canonical path"
     );
 }
