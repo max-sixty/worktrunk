@@ -943,7 +943,7 @@ approved-commands = ["echo 'stdout output' && echo 'stderr output' >&2"]
         .find(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("cmd-0"))
+                .is_some_and(|n| n.ends_with(".log") && n.starts_with("cmd-0"))
         })
         .expect("Should have a cmd-0 log file");
 
@@ -1143,7 +1143,11 @@ approved-commands = [
     ] {
         let log_file = log_files
             .iter()
-            .find(|e| e.file_name().to_string_lossy().starts_with(task))
+            .find(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.ends_with(".log") && name.starts_with(task)
+            })
             .unwrap_or_else(|| panic!("should have log file for {task} in {post_start_dir:?}"));
 
         wait_for_file_content(&log_file.path());

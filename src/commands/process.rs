@@ -137,8 +137,35 @@ pub(crate) fn log_head_sidecar(log_path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-pub(crate) fn write_log_head(log_path: &Path, head: &str) -> std::io::Result<()> {
-    std::fs::write(log_head_sidecar(log_path), format!("{head}\n"))
+/// Record `head` beside `log_path`, or remove a sidecar left by an earlier run.
+///
+/// A missing OID must not leave the previous run's file in place: the log is
+/// truncated on each run, and a stale sidecar would attribute the new output
+/// to the old commit.
+pub(crate) fn record_log_head(log_path: &Path, head: Option<&str>) -> std::io::Result<()> {
+    let sidecar = log_head_sidecar(log_path);
+    match head.map(str::trim).filter(|head| !head.is_empty()) {
+        Some(head) => std::fs::write(sidecar, format!("{head}\n")),
+        None => match std::fs::remove_file(sidecar) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    }
+}
+
+/// Branch-tip OID, only when `refs/heads/<branch>` still exists.
+///
+/// No fallback to the worktree HEAD: `post-remove` runs in the destination
+/// after the branch is gone, and that HEAD is a different commit.
+fn branch_ref_oid(repo: &Repository, branch: &str) -> Option<String> {
+    if branch.is_empty() || branch == "HEAD" || branch == "detached" {
+        return None;
+    }
+    let spec = format!("refs/heads/{branch}");
+    repo.run_command(&["rev-parse", "--verify", "--end-of-options", &spec])
+        .ok()
+        .map(|oid| oid.trim().to_string())
+        .filter(|oid| !oid.is_empty())
 }
 
 pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
@@ -149,25 +176,6 @@ pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
     } else {
         Some(head.to_string())
     }
-}
-
-/// OID of `branch` when the log is created. A detached or unborn checkout
-/// falls back to that worktree's HEAD, which is `None` when there is no commit.
-pub(crate) fn capture_branch_head(
-    repo: &Repository,
-    worktree_path: &Path,
-    branch: &str,
-) -> Option<String> {
-    if !branch.is_empty() && branch != "HEAD" && branch != "detached" {
-        let spec = format!("refs/heads/{branch}");
-        if let Ok(oid) = repo.run_command(&["rev-parse", "--verify", "--end-of-options", &spec]) {
-            let oid = oid.trim();
-            if !oid.is_empty() {
-                return Some(oid.to_string());
-            }
-        }
-    }
-    repo.worktree_at(worktree_path).head_sha().ok().flatten()
 }
 
 /// Spawn a detached background process with output redirected to a log file.
@@ -195,6 +203,7 @@ pub fn spawn_detached(
         .map(OsString::from)
         .chain(args.iter().cloned())
         .collect();
+    let head = (!matches!(hook_log, HookLog::Shared(_))).then(|| branch_ref_oid(repo, branch));
     spawn_detached_exec(
         repo,
         worktree_path,
@@ -203,6 +212,7 @@ pub fn spawn_detached(
         branch,
         hook_log,
         &[],
+        head.flatten().as_deref(),
     )
 }
 
@@ -228,12 +238,11 @@ pub fn spawn_detached_exec(
     branch: &str,
     hook_log: &HookLog,
     stdin_bytes: &[u8],
+    head: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
-    if !matches!(hook_log, HookLog::Shared(_))
-        && let Some(head) = capture_branch_head(repo, worktree_path, branch)
-    {
-        write_log_head(&log_path, &head).with_context(|| {
+    if !matches!(hook_log, HookLog::Shared(_)) {
+        record_log_head(&log_path, head).with_context(|| {
             format!(
                 "Failed to record hook log head {}",
                 log_head_sidecar(&log_path).display()

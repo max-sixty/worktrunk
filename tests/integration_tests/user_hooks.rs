@@ -3027,7 +3027,10 @@ fn test_concurrent_hook_single_failure(repo: TestRepo) {
     let cmd_log = fs::read_dir(&post_start_dir)
         .unwrap_or_else(|e| panic!("reading {post_start_dir:?}: {e}"))
         .filter_map(|e| e.ok())
-        .find(|e| e.file_name().to_string_lossy().contains("cmd-0"))
+        .find(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.ends_with(".log") && name.contains("cmd-0")
+        })
         .expect("Should have a cmd-0 log file");
 
     // Wait for content to be written (command runs async)
@@ -3083,7 +3086,10 @@ second = "echo SECOND_OUTPUT"
     for (task, expected) in [("first", "FIRST_OUTPUT"), ("second", "SECOND_OUTPUT")] {
         let log_file = log_files
             .iter()
-            .find(|e| e.file_name().to_string_lossy().starts_with(task))
+            .find(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.ends_with(".log") && name.starts_with(task)
+            })
             .unwrap_or_else(|| panic!("should have log file for {task}"));
 
         wait_for_file_content(&log_file.path());

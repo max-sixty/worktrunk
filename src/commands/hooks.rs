@@ -594,6 +594,14 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 
     let hook_log = HookLog::hook(source, hook_type, "runner");
     let log_label = format!("{hook_type} {source} runner");
+    // Same frozen `{{ commit }}` the steps run against. The runner log is
+    // opened here, before those steps, so it must not rev-parse again.
+    let head = spec.steps.iter().find_map(|step| {
+        step.commands()
+            .iter()
+            .find_map(|cmd| cmd.context.get("commit"))
+            .map(str::to_owned)
+    });
 
     if let Err(err) = spawn_detached_exec(
         repo,
@@ -603,6 +611,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         &spec.branch,
         &hook_log,
         &spec_json,
+        head.as_deref(),
     ) {
         eprintln!(
             "{}",
