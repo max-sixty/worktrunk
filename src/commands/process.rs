@@ -127,6 +127,49 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Sidecar written next to a per-branch hook log: `{path}.head`.
+///
+/// The log walker only collects `.log` files, so this name stays out of the
+/// listing. It holds the branch OID at the moment the log was created.
+pub(crate) fn log_head_sidecar(log_path: &Path) -> PathBuf {
+    let mut name = log_path.as_os_str().to_owned();
+    name.push(".head");
+    PathBuf::from(name)
+}
+
+pub(crate) fn write_log_head(log_path: &Path, head: &str) -> std::io::Result<()> {
+    std::fs::write(log_head_sidecar(log_path), format!("{head}\n"))
+}
+
+pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(log_head_sidecar(log_path)).ok()?;
+    let head = head.trim();
+    if head.is_empty() {
+        None
+    } else {
+        Some(head.to_string())
+    }
+}
+
+/// OID of `branch` when the log is created. A detached or unborn checkout
+/// falls back to that worktree's HEAD, which is `None` when there is no commit.
+pub(crate) fn capture_branch_head(
+    repo: &Repository,
+    worktree_path: &Path,
+    branch: &str,
+) -> Option<String> {
+    if !branch.is_empty() && branch != "HEAD" && branch != "detached" {
+        let spec = format!("refs/heads/{branch}");
+        if let Ok(oid) = repo.run_command(&["rev-parse", "--verify", "--end-of-options", &spec]) {
+            let oid = oid.trim();
+            if !oid.is_empty() {
+                return Some(oid.to_string());
+            }
+        }
+    }
+    repo.worktree_at(worktree_path).head_sha().ok().flatten()
+}
+
 /// Spawn a detached background process with output redirected to a log file.
 ///
 /// The process will be fully detached from the parent:
@@ -187,6 +230,16 @@ pub fn spawn_detached_exec(
     stdin_bytes: &[u8],
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
+    if !matches!(hook_log, HookLog::Shared(_))
+        && let Some(head) = capture_branch_head(repo, worktree_path, branch)
+    {
+        write_log_head(&log_path, &head).with_context(|| {
+            format!(
+                "Failed to record hook log head {}",
+                log_head_sidecar(&log_path).display()
+            )
+        })?;
+    }
 
     tracing::debug!(
         program = %program.display(),

@@ -2274,6 +2274,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "size": "<SIZE>",
               "modified_at": "<MTIME>",
               "branch": null,
+              "head": null,
               "source": "internal",
               "hook_type": null,
               "name": "remove"
@@ -2284,6 +2285,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "size": "<SIZE>",
               "modified_at": "<MTIME>",
               "branch": "feature",
+              "head": null,
               "source": "user",
               "hook_type": "post-start",
               "name": "npm"
@@ -3179,6 +3181,74 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
     assert_eq!(hook["branch"], "feature");
+    assert_eq!(hook["head"], serde_json::Value::Null);
+}
+
+/// `head` is the OID written beside the log, not the branch's current tip.
+#[rstest]
+fn test_logs_get_json_head_is_the_recorded_oid(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    let relative = hook_log_rel_path("main", "user", "post-start", "server");
+    write_log_at(&log_dir, &relative, "output");
+    let recorded = "0123456789abcdef0123456789abcdef01234567";
+    std::fs::write(
+        format!("{}.head", log_dir.join(&relative).display()),
+        format!("{recorded}\n"),
+    )
+    .unwrap();
+    repo.run_git(&["commit", "--allow-empty", "-m", "move HEAD"]);
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["hook_output"][0]["head"], recorded);
+    assert!(parsed["command_log"][0].get("head").is_none());
+}
+
+/// A background hook records the branch OID when it opens the log, and a
+/// later commit does not change that recorded value.
+#[rstest]
+fn test_background_hook_records_branch_oid(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo recorded""#);
+    let head = repo.head_sha();
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "post-start", "--yes"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sidecar = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start")
+        .join("runner.log.head");
+    crate::common::wait_for_file_content(&sidecar);
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), head);
+
+    repo.commit("later");
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let runner = parsed["hook_output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "runner")
+        .unwrap();
+    assert_eq!(runner["head"], head);
+    assert_ne!(runner["head"], repo.head_sha());
 }
 
 /// `branch` is the real branch name, not the sanitized log directory, so

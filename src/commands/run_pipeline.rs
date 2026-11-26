@@ -124,7 +124,7 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         match step {
             PreparedStep::Single(cmd) => {
                 let log_name = command_log_name(cmd.name.as_deref(), cmd_index);
-                let log_file = create_command_log(&spec, &log_dir, &log_name)?;
+                let log_file = create_command_log(&repo, &spec, &log_dir, &log_name)?;
                 let expanded =
                     expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
                 let (mut child, mut trace) =
@@ -238,7 +238,7 @@ fn run_concurrent_group(
     let spawn_result = (|| -> anyhow::Result<()> {
         for cmd in commands {
             let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let log_file = create_command_log(spec, log_dir, &log_name)?;
+            let log_file = create_command_log(repo, spec, log_dir, &log_name)?;
             let expanded =
                 expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
             let spawned = spawn_shell_command(&expanded, &spec.worktree_path, log_file)
@@ -300,15 +300,27 @@ fn command_log_name(name: Option<&str>, index: usize) -> String {
 }
 
 /// Create a per-command log file in the repository's log directory.
-fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow::Result<fs::File> {
+fn create_command_log(
+    repo: &Repository,
+    spec: &PipelineSpec,
+    log_dir: &Path,
+    name: &str,
+) -> anyhow::Result<fs::File> {
     let hook_log = HookLog::hook(spec.source, spec.hook_type, name);
     let relative_path = hook_log.path(Path::new(""), &spec.branch);
-    worktrunk::utils::open_log_file(log_dir, &relative_path, false).with_context(|| {
-        format!(
-            "failed to create log file: {}",
-            log_dir.join(relative_path).display()
-        )
-    })
+    let log_path = log_dir.join(&relative_path);
+    let file = worktrunk::utils::open_log_file(log_dir, &relative_path, false)
+        .with_context(|| format!("failed to create log file: {}", log_path.display()))?;
+    if let Some(head) = super::process::capture_branch_head(repo, &spec.worktree_path, &spec.branch)
+    {
+        super::process::write_log_head(&log_path, &head).with_context(|| {
+            format!(
+                "failed to record hook log head {}",
+                super::process::log_head_sidecar(&log_path).display()
+            )
+        })?;
+    }
+    Ok(file)
 }
 
 #[cfg(all(test, unix))]
