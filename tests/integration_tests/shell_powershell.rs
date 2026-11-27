@@ -236,6 +236,58 @@ exit $LASTEXITCODE
     assert_eq!(std::fs::read_dir(&temp_path).unwrap().count(), 0);
 }
 
+/// A directive naming a directory that no longer exists leaves the shell where
+/// it was, so the wrapper reports failure even though `wt` itself exited 0, as
+/// the bash, zsh and fish wrappers do.
+#[test]
+fn test_powershell_wrapper_reports_failed_cd() {
+    let temp_dir = worktrunk::testing::test_tempdir();
+    let missing = temp_dir.path().join("removed-worktree");
+
+    let mock_bin = temp_dir.path().join("mock-wt.ps1");
+    std::fs::write(
+        &mock_bin,
+        r#"
+if ($env:COMPLETE) { exit 0 }
+[IO.File]::WriteAllText($env:WORKTRUNK_DIRECTIVE_CD_FILE, $env:WORKTRUNK_TEST_TARGET)
+exit 0
+"#,
+    )
+    .unwrap();
+
+    let wrapper = ShellInit::with_prefix(Shell::PowerShell, "wt".to_string())
+        .generate()
+        .unwrap();
+    let mock_bin_escaped = mock_bin.display().to_string().replace('\'', "''");
+    let script = format!(
+        r#"
+$env:WORKTRUNK_BIN = '{mock_bin_escaped}'
+{wrapper}
+$before = (Get-Location).Path
+wt switch feature
+$code = $LASTEXITCODE
+Write-Output "code=$code"
+Write-Output "moved=$((Get-Location).Path -ne $before)"
+"#
+    );
+
+    let output = Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("WORKTRUNK_TEST_TARGET", &missing)
+        .output()
+        .expect("Failed to run pwsh");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("code=1"),
+        "a failed cd must set $LASTEXITCODE to 1.\nstdout: {stdout}\nstderr: {stderr}",
+    );
+    assert!(
+        stdout.contains("moved=False"),
+        "the shell must stay put.\nstdout: {stdout}\nstderr: {stderr}",
+    );
+}
+
 /// Write a `wt` into `dir` that appends `<label> <args>` to the file named by
 /// `WORKTRUNK_TEST_CALL_LOG`, so the log shows which `wt` each call reached.
 fn write_logging_wt(dir: &std::path::Path, label: &str) {
