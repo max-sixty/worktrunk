@@ -55,8 +55,10 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
                 $target = Get-Content -LiteralPath $cdFile -Raw
                 if ($target) {
                     Set-Location -LiteralPath $target
-                    if ($exitCode -eq 0) {
-                        $exitCode = $LASTEXITCODE
+                    # Set-Location is a cmdlet: a failure clears $? but leaves
+                    # $LASTEXITCODE at wt's own status.
+                    if (-not $? -and $exitCode -eq 0) {
+                        $exitCode = 1
                     }
                 }
             }
@@ -72,13 +74,13 @@ if ((Get-Command wt -ErrorAction SilentlyContinue) -or $env:WORKTRUNK_BIN) {
         # stray exit-code line (e.g. `0`) after the real command output — that
         # corrupts captures like `$out = wt list --format json`. Setting
         # $global:LASTEXITCODE is what propagates the failure; the Write-Error
-        # below surfaces a visible error record. Note: because this is a simple
-        # function, Write-Error does NOT set the caller's $?, so don't rely on
-        # $? reflecting a wt failure.
+        # below only records it in $Error, printing nothing. Note: because this
+        # is a simple function, Write-Error does NOT set the caller's $?, so
+        # don't rely on $? reflecting a wt failure.
         $global:LASTEXITCODE = $exitCode
         if ($exitCode -ne 0) {
-            # Surface a visible error record without throwing (does not set the
-            # caller's $? from a simple function; $LASTEXITCODE carries the code)
+            # SilentlyContinue keeps the record out of the output and does not
+            # throw; $LASTEXITCODE carries the code
             Write-Error "wt exited with code $exitCode" -ErrorAction SilentlyContinue
         }
     }
