@@ -203,8 +203,12 @@ pub fn spawn_detached(
         .map(OsString::from)
         .chain(args.iter().cloned())
         .collect();
-    let head = (!matches!(hook_log, HookLog::Shared(_))).then(|| branch_ref_oid(repo, branch));
-    spawn_detached_exec(
+    let head = if matches!(hook_log, HookLog::Shared(_)) {
+        None
+    } else {
+        branch_ref_oid(repo, branch)
+    };
+    let log_path = spawn_detached_exec(
         repo,
         worktree_path,
         &shell.executable,
@@ -212,8 +216,16 @@ pub fn spawn_detached(
         branch,
         hook_log,
         &[],
-        head.flatten().as_deref(),
-    )
+    )?;
+    if !matches!(hook_log, HookLog::Shared(_)) {
+        record_log_head(&log_path, head.as_deref()).with_context(|| {
+            format!(
+                "Failed to record hook log head {}",
+                log_head_sidecar(&log_path).display()
+            )
+        })?;
+    }
+    Ok(log_path)
 }
 
 /// Spawn a detached background process by executing a binary directly.
@@ -238,17 +250,8 @@ pub fn spawn_detached_exec(
     branch: &str,
     hook_log: &HookLog,
     stdin_bytes: &[u8],
-    head: Option<&str>,
 ) -> anyhow::Result<std::path::PathBuf> {
     let (log_path, log_file) = create_detach_log(repo, branch, hook_log)?;
-    if !matches!(hook_log, HookLog::Shared(_)) {
-        record_log_head(&log_path, head).with_context(|| {
-            format!(
-                "Failed to record hook log head {}",
-                log_head_sidecar(&log_path).display()
-            )
-        })?;
-    }
 
     tracing::debug!(
         program = %program.display(),
@@ -548,5 +551,42 @@ mod tests {
                 .to_slash_lossy(),
             @"/repo/.git/wt/logs/internal-trash-sweep.log"
         );
+    }
+
+    #[test]
+    fn record_log_head_writes_and_clears() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+
+        record_log_head(&log, Some("abc\n")).unwrap();
+        assert_eq!(read_log_head(&log).as_deref(), Some("abc"));
+
+        record_log_head(&log, None).unwrap();
+        assert_eq!(read_log_head(&log), None);
+        record_log_head(&log, None).unwrap();
+    }
+
+    #[test]
+    fn branch_ref_oid_is_that_branch_tip() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let main = test.head_sha();
+        test.run_git(&["checkout", "-b", "feature"]);
+        test.commit("feature");
+        let feature = test.head_sha();
+        test.run_git(&["checkout", "main"]);
+
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            branch_ref_oid(&repo, "feature").as_deref(),
+            Some(feature.as_str())
+        );
+        assert_ne!(
+            branch_ref_oid(&repo, "feature").as_deref(),
+            Some(main.as_str())
+        );
+        assert_eq!(branch_ref_oid(&repo, "missing"), None);
+        assert_eq!(branch_ref_oid(&repo, "HEAD"), None);
+        assert_eq!(branch_ref_oid(&repo, "detached"), None);
     }
 }
