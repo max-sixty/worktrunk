@@ -390,7 +390,7 @@ impl Repository {
     }
 
     /// Read the switch history. A missing file means no history; so does an
-    /// unparseable one, which the next switch overwrites.
+    /// unparsable one, which the next switch overwrites.
     fn load_switch_history(&self) -> anyhow::Result<SwitchHistory> {
         let file = self.switch_history_path();
         match std::fs::read_to_string(&file) {
