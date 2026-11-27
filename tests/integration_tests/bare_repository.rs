@@ -2451,15 +2451,21 @@ enum BareCreateSetup {
     NoWorktrees,
     FeatureWorktree,
     NoDefaultBranch,
+    /// `main` has a worktree, but an empty `WORKTRUNK_PROJECT_CONFIG_PATH`
+    /// disables project config before any worktree is consulted.
+    EmptyOverride,
 }
 
 /// `wt config create --project` at a bare repo's root has nowhere to write
 /// when no worktree holds the default branch, whether or not other worktrees
-/// exist. The error names that state and both ways out.
+/// exist. The error names that state and both ways out. An empty
+/// `WORKTRUNK_PROJECT_CONFIG_PATH` is reported as such, not as a missing
+/// worktree.
 #[rstest]
 #[case::no_worktrees("no_worktrees", BareCreateSetup::NoWorktrees)]
 #[case::only_a_feature_worktree("only_feature_worktree", BareCreateSetup::FeatureWorktree)]
 #[case::no_default_branch("no_default_branch", BareCreateSetup::NoDefaultBranch)]
+#[case::empty_override("empty_override", BareCreateSetup::EmptyOverride)]
 fn test_bare_repo_config_create_project_without_default_branch_worktree(
     #[case] name: &str,
     #[case] setup: BareCreateSetup,
@@ -2477,16 +2483,23 @@ fn test_bare_repo_config_create_project_without_default_branch_worktree(
             test.run_git_in(bare, &["update-ref", "--no-deref", "HEAD", "feature"]);
             test.run_git_in(bare, &["branch", "-m", "main", "other"]);
         }
+        BareCreateSetup::EmptyOverride => {
+            test.run_git_in(bare, &["worktree", "add", "main", "main"]);
+        }
     }
 
     let settings = setup_temp_snapshot_settings(test.temp_path());
     settings.bind(|| {
         let mut cmd = wt_command();
         test.configure_wt_cmd(&mut cmd);
+        if matches!(setup, BareCreateSetup::EmptyOverride) {
+            cmd.env("WORKTRUNK_PROJECT_CONFIG_PATH", "");
+        }
         cmd.args(["config", "create", "--project"])
             .current_dir(test.bare_repo_path());
 
         assert_cmd_snapshot!(format!("bare_repo_config_create_project_{name}"), cmd);
     });
     assert!(!test.bare_repo_path().join(".config").exists());
+    assert!(!test.bare_repo_path().join("main/.config").exists());
 }

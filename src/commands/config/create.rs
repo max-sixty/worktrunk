@@ -46,6 +46,23 @@ pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
         let Some(config_path) = repo.project_config_path()? else {
+            // An empty override disables project config before any worktree
+            // is consulted, so no worktree state explains the `None`.
+            if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some_and(|p| p.is_empty()) {
+                eprintln!(
+                    "{}",
+                    error_message(cformat!(
+                        "Cannot create project config — <bold>WORKTRUNK_PROJECT_CONFIG_PATH</> is empty, which disables project config"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Unset <underline>WORKTRUNK_PROJECT_CONFIG_PATH</> or set it to a file path"
+                    ))
+                );
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
+            }
             if repo.is_bare().unwrap_or(false) {
                 // At a bare root the project config path is the default
                 // branch's worktree, so a worktree on another branch doesn't
