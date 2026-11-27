@@ -340,12 +340,13 @@ impl Repository {
             // to merge-tree. A dirty worktree probes an ephemeral commit but
             // stores the result under `branch_head+tree`.
             let cache_file = super::sha_cache::merge_conflicts_path(self, cache_a, cache_b);
-            // `sh` is the parent of `git merge-tree`, in its own process group.
-            // Stderr goes to a file until the conflict bit is stored: a caller
-            // that has already exited closes the pipe, and SIGPIPE would kill
-            // the driver before that write (#4273, #4585).
-            let script = r#"err=$(mktemp) || exit 125
-out=$(git merge-tree --write-tree "$1" "$2" 2>"$err")
+            // No temporary file for stderr: a list must survive an unusable
+            // `TMPDIR`, and a buffer beside the entry would outlive a killed
+            // shell, since nothing sweeps a non-`.json` name there. `sh`
+            // buffers stdout, the stream git writes on a clean merge or a
+            // conflict, so only a failed probe's stderr reaches this process
+            // directly.
+            let script = r#"out=$(git merge-tree --write-tree "$1" "$2")
 status=$?
 mkdir -p "$(dirname "$3")"
 if [ "$status" -eq 0 ]; then
@@ -353,8 +354,6 @@ if [ "$status" -eq 0 ]; then
 elif [ "$status" -eq 1 ]; then
   printf '%s' true > "$3"
 fi
-cat "$err" >&2
-rm -f "$err"
 printf '%s\n' "$out"
 exit "$status"
 "#;
