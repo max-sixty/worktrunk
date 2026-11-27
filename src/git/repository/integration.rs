@@ -341,9 +341,11 @@ impl Repository {
             // stores the result under `branch_head+tree`.
             let cache_file = super::sha_cache::merge_conflicts_path(self, cache_a, cache_b);
             // `sh` is the parent of `git merge-tree`, in its own process group.
-            // It writes the conflict bit, then exits with git's status, so a
-            // caller that stops waiting still leaves the cache behind.
-            let script = r#"out=$(git merge-tree --write-tree "$1" "$2")
+            // Stderr goes to a file until the conflict bit is stored: a caller
+            // that has already exited closes the pipe, and SIGPIPE would kill
+            // the driver before that write (#4273, #4585).
+            let script = r#"err=$(mktemp) || exit 125
+out=$(git merge-tree --write-tree "$1" "$2" 2>"$err")
 status=$?
 mkdir -p "$(dirname "$3")"
 if [ "$status" -eq 0 ]; then
@@ -351,6 +353,8 @@ if [ "$status" -eq 0 ]; then
 elif [ "$status" -eq 1 ]; then
   printf '%s' true > "$3"
 fi
+cat "$err" >&2
+rm -f "$err"
 printf '%s\n' "$out"
 exit "$status"
 "#;
@@ -1464,9 +1468,9 @@ mod merge_tree_cache_tests {
     /// A merge-tree probe mid-merge-driver must not be signalled when the
     /// picker cancels background work: git removes the driver's
     /// `.merge_file_*` temp files only on a normal return, so a SIGTERM strands
-    /// them in the worktree (#4273). The driver records its parent — the
-    /// running `git merge-tree` — so the test can check that PID isn't
-    /// registered for cancellation while the driver runs.
+    /// them in the worktree (#4273). The driver records the parent of
+    /// `git merge-tree`, which is the `sh` `Cmd` spawned. That is the pid
+    /// cancellation would track; git itself is only a grandchild.
     #[cfg(unix)]
     #[test]
     fn merge_tree_probe_is_not_signalled_on_cancel() {
@@ -1488,7 +1492,7 @@ mod merge_tree_cache_tests {
         let marker = dir.path().join("driver-parent");
         let release = dir.path().join("release");
         let driver = format!(
-            "echo $PPID > '{}'; while [ ! -e '{}' ]; do sleep 0.05; done; exit 1",
+            "echo $(ps -o ppid= -p $PPID) > '{}'; while [ ! -e '{}' ]; do sleep 0.05; done; exit 1",
             marker.display(),
             release.display()
         );
