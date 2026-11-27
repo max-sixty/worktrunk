@@ -153,6 +153,17 @@ pub(crate) fn record_log_head(log_path: &Path, head: Option<&str>) -> std::io::R
     }
 }
 
+/// Record the OID, ignoring a failure. A missing sidecar reads back as
+/// `head: null`, and failing the spawn or the step would skip the hook itself.
+pub(crate) fn record_log_head_best_effort(log_path: &Path, head: Option<&str>) {
+    if let Err(err) = record_log_head(log_path, head) {
+        tracing::debug!(
+            "failed to record hook log head {}: {err}",
+            log_head_sidecar(log_path).display()
+        );
+    }
+}
+
 /// Branch-tip OID, only when `refs/heads/<branch>` still exists.
 ///
 /// No fallback to the worktree HEAD: `post-remove` runs in the destination
@@ -218,12 +229,7 @@ pub fn spawn_detached(
         &[],
     )?;
     if !matches!(hook_log, HookLog::Shared(_)) {
-        record_log_head(&log_path, head.as_deref()).with_context(|| {
-            format!(
-                "Failed to record hook log head {}",
-                log_head_sidecar(&log_path).display()
-            )
-        })?;
+        record_log_head_best_effort(&log_path, head.as_deref());
     }
     Ok(log_path)
 }

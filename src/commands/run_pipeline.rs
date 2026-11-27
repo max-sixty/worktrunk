@@ -314,13 +314,9 @@ fn create_command_log(
         .with_context(|| format!("failed to create log file: {}", log_path.display()))?;
     // `commit` is the frozen `{{ commit }}` the step runs against, including
     // the removed commit on post-remove. A fresh rev-parse would see the
-    // destination worktree instead.
-    super::process::record_log_head(&log_path, head).with_context(|| {
-        format!(
-            "failed to record hook log head {}",
-            super::process::log_head_sidecar(&log_path).display()
-        )
-    })?;
+    // destination worktree instead. A failed sidecar write leaves `head` null
+    // and must not skip the hook.
+    super::process::record_log_head_best_effort(&log_path, head);
     Ok(file)
 }
 

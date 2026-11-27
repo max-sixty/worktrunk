@@ -88,7 +88,7 @@ use super::command_executor::{
     execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
-use crate::commands::process::{HookLog, record_log_head, spawn_detached_exec};
+use crate::commands::process::{HookLog, record_log_head_best_effort, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
 
 use super::hook_filter::{ParsedFilter, selected_hook_configs};
@@ -619,9 +619,7 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
             );
         }
         Ok(log_path) => {
-            record_log_head(&log_path, head.as_deref()).with_context(|| {
-                format!("Failed to record hook log head {}", log_path.display())
-            })?;
+            record_log_head_best_effort(&log_path, head.as_deref());
             let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
             worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
         }
