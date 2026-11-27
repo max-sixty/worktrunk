@@ -340,20 +340,26 @@ impl Repository {
             // to merge-tree. A dirty worktree probes an ephemeral commit but
             // stores the result under `branch_head+tree`.
             let cache_file = super::sha_cache::merge_conflicts_path(self, cache_a, cache_b);
-            // No temporary file for stderr: a list must survive an unusable
-            // `TMPDIR`, and a buffer beside the entry would outlive a killed
-            // shell, since nothing sweeps a non-`.json` name there. `sh`
-            // buffers stdout, the stream git writes on a clean merge or a
-            // conflict, so only a failed probe's stderr reaches this process
-            // directly.
-            let script = r#"out=$(git merge-tree --write-tree "$1" "$2")
+            // Stderr is buffered in `sh` until the conflict bit is stored: a
+            // merge driver inherits git's stderr, and once a caller that
+            // stopped waiting has exited, a write from the driver SIGPIPEs
+            // git before the bit is written (#4273, #4585). The buffer sits
+            // beside the entry rather than in `TMPDIR`, which a list must not
+            // depend on. It ends in `.json` so a shell that is killed leaves
+            // something the cache's sweep and clear both reclaim, and in the
+            // shell's pid so two probes of one pair never share it.
+            let script = r#"mkdir -p "$(dirname "$3")"
+err="$3.stderr.$$.json"
+: > "$err" || exit 125
+out=$(git merge-tree --write-tree "$1" "$2" 2>"$err")
 status=$?
-mkdir -p "$(dirname "$3")"
 if [ "$status" -eq 0 ]; then
   printf '%s' false > "$3"
 elif [ "$status" -eq 1 ]; then
   printf '%s' true > "$3"
 fi
+cat "$err" >&2
+rm -f "$err"
 printf '%s\n' "$out"
 exit "$status"
 "#;
@@ -1540,6 +1546,149 @@ mod merge_tree_cache_tests {
                 "the probe must record the conflict bit before it exits"
             );
         });
+    }
+
+    /// The #4585 case: the caller stops waiting and exits while a merge driver
+    /// is still running. The driver inherits git's stderr, which is the
+    /// caller's pipe, so its next write would SIGPIPE git before the bit is
+    /// stored, and the next list would compute the probe again. The script
+    /// buffers stderr until the bit is written, so the bit lands regardless.
+    ///
+    /// The caller is a child test process that starts the probe and exits
+    /// without joining it. The driver waits for a marker the parent writes only
+    /// after that child is gone, so the pipe's reader is really closed when
+    /// the driver writes.
+    #[cfg(unix)]
+    #[test]
+    fn merge_tree_probe_keeps_the_bit_when_the_caller_exits() {
+        const CHILD_ENV: &str = "WORKTRUNK_TEST_MERGE_TREE_CALLER_CHILD";
+        const ROOT_ENV: &str = "WORKTRUNK_TEST_MERGE_TREE_REPO";
+        const GO_ENV: &str = "WORKTRUNK_TEST_MERGE_TREE_GO";
+        const STARTED_ENV: &str = "WORKTRUNK_TEST_MERGE_TREE_STARTED";
+
+        if let (Some(root), Some(_), Some(started)) = (
+            std::env::var_os(ROOT_ENV),
+            std::env::var_os(GO_ENV),
+            std::env::var_os(STARTED_ENV),
+        ) {
+            // Child, on the parent's repo: start the probe on a detached
+            // thread and return from `main` while it still runs. Returning
+            // ends the process, which closes the read end of the probe's
+            // stderr pipe — the caller "exited".
+            let repo = Repository::at(std::path::PathBuf::from(root)).unwrap();
+            let started = std::path::PathBuf::from(started);
+            let pair: Vec<String> = std::env::var("WORKTRUNK_TEST_MERGE_TREE_PAIR")
+                .unwrap()
+                .split(' ')
+                .map(str::to_owned)
+                .collect();
+            let (a, b) = (pair[0].clone(), pair[1].clone());
+            std::thread::spawn(move || {
+                let _ = repo.merge_tree_outcome(&a, &b);
+            });
+            // Do not exit before the merge driver runs, or nothing is abandoned.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while !started.exists() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the merge driver never started; nothing to abandon"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            return;
+        }
+
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path().to_path_buf();
+        std::fs::write(root.join("f.txt"), "a\nb\nc\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(root.join("f.txt"), "a\nFEAT\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(root.join("f.txt"), "a\nMAIN\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let dir = crate::testing::test_tempdir();
+        let started = dir.path().join("driver-started");
+        let go = dir.path().join("driver-go");
+        // The driver reports that it runs, then waits for the caller to be gone
+        // before it writes to the inherited stderr pipe.
+        let driver = format!(
+            "echo $$ > '{}'; while [ ! -e '{}' ]; do sleep 0.05; done; echo driver progress >&2; exit 0",
+            started.display(),
+            go.display()
+        );
+        test.run_git(&["config", "merge.slow.driver", &driver]);
+        let git_dir = test.git_output(&["rev-parse", "--absolute-git-dir"]);
+        std::fs::create_dir_all(std::path::Path::new(&git_dir).join("info")).unwrap();
+        std::fs::write(
+            std::path::Path::new(&git_dir).join("info/attributes"),
+            "* merge=slow\n",
+        )
+        .unwrap();
+
+        let repo = Repository::at(&root).unwrap();
+        let bit_path =
+            super::super::sha_cache::merge_conflicts_path(&repo, &main_sha, &feature_sha);
+
+        // Parent: run the caller as a child process and wait for it to exit.
+        let mut caller = std::process::Command::new(std::env::current_exe().unwrap());
+        caller
+            .args([
+                "--exact",
+                "git::repository::integration::merge_tree_cache_tests::merge_tree_probe_keeps_the_bit_when_the_caller_exits",
+            ])
+            .env(CHILD_ENV, "1")
+            .env(ROOT_ENV, &root)
+            .env(GO_ENV, &go)
+            .env(STARTED_ENV, &started)
+            .env(
+                "WORKTRUNK_TEST_MERGE_TREE_PAIR",
+                format!("{main_sha} {feature_sha}"),
+            )
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        let output = crate::shell_exec::spawn(&mut caller)
+            .unwrap()
+            .wait_with_output()
+            .unwrap();
+        let child_stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "caller failed: {}\n{child_stderr}",
+            output.status
+        );
+        // The caller is gone, so the probe's stderr pipe has no reader.
+        std::fs::write(&go, "").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if bit_path.exists() {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                let entries: Vec<String> = std::fs::read_dir(bit_path.parent().unwrap())
+                    .map(|it| {
+                        it.flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                panic!(
+                    "the abandoned probe never recorded its conflict bit.\n\
+                     cache dir entries: {entries:?}"
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // The driver exits 0, so it resolves the conflict itself and git
+        // reports a clean merge: the bit is `false`. What matters is that it
+        // lands at all, after the caller that wanted it is gone.
+        assert_eq!(std::fs::read_to_string(&bit_path).unwrap(), "false");
     }
 }
 
