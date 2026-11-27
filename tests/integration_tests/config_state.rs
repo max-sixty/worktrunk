@@ -3251,6 +3251,44 @@ fn test_background_hook_records_branch_oid(repo: TestRepo) {
     assert_ne!(runner["head"], repo.head_sha());
 }
 
+/// A runner log that cannot be opened fails the pipeline's spawn, and the
+/// hook never runs. That failure is reported on stderr rather than swallowed:
+/// a hook the user configured silently not running is the worst outcome.
+/// A directory where the log file belongs makes the open fail.
+#[rstest]
+fn test_background_hook_spawn_failure_is_reported(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo never-runs""#);
+    let runner_log_dir = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start");
+    std::fs::create_dir_all(&runner_log_dir).unwrap();
+    // The leaf, where the open lands. `prepare_log_file` checks only ancestors.
+    std::fs::create_dir(runner_log_dir.join("runner.log")).unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "post-start", "--yes"]);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Failed to spawn pipeline"),
+        "the spawn failure must reach stderr; stderr:\n{stderr}"
+    );
+    // Nothing was spawned, so neither the step's own log (an unnamed step is
+    // `cmd-0`) nor the runner's OID sidecar was written. Both exist only after
+    // a successful spawn.
+    assert!(
+        !runner_log_dir.join("cmd-0.log").exists(),
+        "the hook step must not have run"
+    );
+    assert!(
+        !runner_log_dir.join("runner.log.head").exists(),
+        "no OID is recorded for a pipeline that never spawned"
+    );
+}
+
 /// `branch` is the real branch name, not the sanitized log directory, so
 /// `select(.branch == "feature/x")` matches exactly. A directory no local
 /// branch maps to — a deleted branch, or one two branches share — is `null`.

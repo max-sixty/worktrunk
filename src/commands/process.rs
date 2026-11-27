@@ -595,4 +595,37 @@ mod tests {
         assert_eq!(branch_ref_oid(&repo, "HEAD"), None);
         assert_eq!(branch_ref_oid(&repo, "detached"), None);
     }
+
+    /// A sidecar that exists but holds no OID reads as `null`, the same as a
+    /// missing one. The JSON entry must not surface a stale or empty `head`.
+    #[test]
+    fn read_log_head_is_none_for_an_empty_sidecar() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+        std::fs::write(log_head_sidecar(&log), "").unwrap();
+
+        assert_eq!(read_log_head(&log), None);
+
+        std::fs::write(log_head_sidecar(&log), "  \n").unwrap();
+        assert_eq!(read_log_head(&log), None, "whitespace-only is empty too");
+    }
+
+    /// A sidecar write that fails is logged, not returned: the caller is about
+    /// to run a hook, and skipping it over bookkeeping would be the wrong
+    /// trade. A directory where the sidecar should be makes the write fail.
+    #[test]
+    fn record_log_head_best_effort_swallows_a_failed_write() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+        std::fs::create_dir(log_head_sidecar(&log)).unwrap();
+
+        record_log_head_best_effort(&log, Some("abc"));
+
+        // The hook log itself is untouched, and `head` reads as null.
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "output");
+        assert_eq!(read_log_head(&log), None);
+        assert!(log_head_sidecar(&log).is_dir());
+    }
 }
