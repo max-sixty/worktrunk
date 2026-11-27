@@ -25,7 +25,7 @@
 //! (`handle_cache_get`) and dropped by `wt config state cache clear`
 //! (`handle_cache_clear`), which needs no prompt:
 //!
-//! - Previous branch (git config `worktrunk.history`, with `worktrunk.history-path`)
+//! - Previous branch (`.git/wt/switch-history.json`)
 //! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
 //!   ratchet in `.git/wt/cache/pr-number/`)
 //! - Summary cache (`.git/wt/cache/summary/`)

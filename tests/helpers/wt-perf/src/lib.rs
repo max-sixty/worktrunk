@@ -633,7 +633,7 @@ pub fn setup_fake_remote(repo_path: &Path) {
 ///   default branch name (repopulated on next `wt` invocation via
 ///   `origin/HEAD` or `git ls-remote`)
 ///
-/// Does NOT clear user-modifiable state: `worktrunk.history`,
+/// Does NOT clear user-modifiable state: `.git/wt/switch-history.json`,
 /// `worktrunk.hints.*`, `worktrunk.state.<branch>.*`, `.git/wt/logs/`,
 /// `.git/wt/trash/`. These don't affect read-path performance, and benches
 /// may rely on them (e.g., branch markers set during setup).
