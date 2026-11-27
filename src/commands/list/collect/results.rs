@@ -286,10 +286,12 @@ pub(super) fn drain_results_with_timings(
             TaskResult::WouldMergeAdd {
                 would_merge_add,
                 is_patch_id_match,
+                is_commits_match,
                 ..
             } => {
                 item.would_merge_add = Some(would_merge_add);
                 item.is_patch_id_match = Some(is_patch_id_match);
+                item.is_commits_match = Some(is_commits_match);
             }
             TaskResult::IsAncestor { is_ancestor, .. } => {
                 item.is_ancestor = Some(is_ancestor);

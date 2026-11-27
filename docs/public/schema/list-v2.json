@@ -387,7 +387,8 @@
         "no_added_changes",
         "trees_match",
         "merge_adds_nothing",
-        "patch_id_match"
+        "patch_id_match",
+        "commits_match"
       ],
       "type": "string"
     },

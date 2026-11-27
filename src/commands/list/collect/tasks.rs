@@ -362,8 +362,9 @@ fn compute_has_file_changes(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
 ///    result tree equals target's tree, the branch is integrated (`MergeAddsNothing`).
 /// 2. `patch-id` fallback — only when merge-tree conflicts (returns `None`).
 ///    Computes the branch's entire diff as a single patch-id and checks if any
-///    target commit matches (`PatchIdMatch`). Detects squash merges where target
-///    later modified the same files.
+///    target commit matches (`PatchIdMatch`), and checks whether every branch
+///    commit's patch-id matches a target commit (`CommitsMatch`). Detects
+///    squash and rebase merges where target later modified the same files.
 ///
 /// These are bundled in one task because patch-id only runs when merge-tree
 /// conflicts — it needs the merge-tree result first. Splitting them into separate
@@ -376,6 +377,7 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
             item_idx: ctx.item_idx,
             would_merge_add: true,
             is_patch_id_match: false,
+            is_commits_match: false,
         });
     }
     // When integration_targets is None, return true (conservative: assume would add)
@@ -384,13 +386,14 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
             item_idx: ctx.item_idx,
             would_merge_add: true,
             is_patch_id_match: false,
+            is_commits_match: false,
         });
     };
     // Combine probes the same way `Repository::integration_reason`
     // ORs the two `check_integration` calls: a branch is integrated if
     // merging would add nothing OR a patch-id matches against EITHER
     // side. So `would_merge_add` ANDs (false on either ⇒ integrated)
-    // and `is_patch_id_match` ORs.
+    // and `is_patch_id_match` / `is_commits_match` OR.
     let branch_sha = ctx.branch_check_sha()?;
     let primary_sha = ctx.resolve_sha(&targets.primary)?;
     let probe = ctx
@@ -398,8 +401,9 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
         .merge_integration_probe_by_sha(&branch_sha, &primary_sha)?;
     let mut would_merge_add = probe.would_merge_add;
     let mut is_patch_id_match = probe.is_patch_id_match;
+    let mut is_commits_match = probe.is_commits_match;
     if let Some(secondary) = targets.secondary.as_deref()
-        && (would_merge_add && !is_patch_id_match)
+        && (would_merge_add && !is_patch_id_match && !is_commits_match)
     {
         let secondary_sha = ctx.resolve_sha(secondary)?;
         let alt = ctx
@@ -407,11 +411,13 @@ fn compute_would_merge_add(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
             .merge_integration_probe_by_sha(&branch_sha, &secondary_sha)?;
         would_merge_add = would_merge_add && alt.would_merge_add;
         is_patch_id_match = is_patch_id_match || alt.is_patch_id_match;
+        is_commits_match = is_commits_match || alt.is_commits_match;
     }
     Ok(TaskResult::WouldMergeAdd {
         item_idx: ctx.item_idx,
         would_merge_add,
         is_patch_id_match,
+        is_commits_match,
     })
 }
 

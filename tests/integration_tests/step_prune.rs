@@ -1078,6 +1078,51 @@ fn test_prune_squash_merged_same_files_modified(mut repo: TestRepo) {
     ));
 }
 
+/// Prune removes a rebase-merged worktree whose branch commits all landed on
+/// main under new SHAs, and keeps one with a commit that didn't land. Main
+/// edits a file each branch added afterwards, so merge-tree conflicts for both
+/// and only the per-commit patch-id check tells them apart.
+#[rstest]
+fn test_prune_rebase_merged_keeps_partially_landed(mut repo: TestRepo) {
+    repo.commit("initial");
+
+    let rebased = repo.add_worktree("feature-rebased");
+    for file in ["a.txt", "b.txt"] {
+        std::fs::write(rebased.join(file), "feature\n").unwrap();
+        repo.run_git_in(&rebased, &["add", file]);
+        repo.run_git_in(&rebased, &["commit", "-m", &format!("Add {file}")]);
+    }
+    let partial = repo.add_worktree("feature-partial");
+    for file in ["c.txt", "d.txt"] {
+        std::fs::write(partial.join(file), "feature\n").unwrap();
+        repo.run_git_in(&partial, &["add", file]);
+        repo.run_git_in(&partial, &["commit", "-m", &format!("Add {file}")]);
+    }
+
+    // Main moves on, lands all of feature-rebased and only the first commit
+    // of feature-partial, then edits a file each branch added.
+    std::fs::write(repo.root_path().join("other.txt"), "other work\n").unwrap();
+    repo.run_git(&["add", "other.txt"]);
+    repo.run_git(&["commit", "-m", "Other work"]);
+    repo.run_git(&["cherry-pick", "main..feature-rebased"]);
+    repo.run_git(&["cherry-pick", "feature-partial~1"]);
+    for file in ["a.txt", "c.txt"] {
+        std::fs::write(repo.root_path().join(file), "feature\nmore on main\n").unwrap();
+    }
+    repo.run_git(&["add", "a.txt", "c.txt"]);
+    repo.run_git(&["commit", "-m", "Advance same files on main"]);
+
+    let mut cmd = make_snapshot_cmd(&repo, "step", &["prune", "--yes", "--min-age=0s"], None);
+    cmd.env("RAYON_NUM_THREADS", "1"); // deterministic output order
+    assert_cmd_snapshot!(cmd);
+
+    assert!(
+        !rebased.exists(),
+        "Rebase-merged worktree should be removed"
+    );
+    assert!(partial.exists(), "Partially landed worktree should remain");
+}
+
 /// Default branch without a worktree should not be pruned despite being
 /// trivially "integrated" into itself (tautological SameCommit).
 #[test]

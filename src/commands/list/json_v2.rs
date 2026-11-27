@@ -370,6 +370,7 @@ pub enum JsonIntegrationReason {
     TreesMatch,
     MergeAddsNothing,
     PatchIdMatch,
+    CommitsMatch,
 }
 
 impl From<IntegrationReason> for JsonIntegrationReason {
@@ -381,6 +382,7 @@ impl From<IntegrationReason> for JsonIntegrationReason {
             IntegrationReason::TreesMatch => Self::TreesMatch,
             IntegrationReason::MergeAddsNothing => Self::MergeAddsNothing,
             IntegrationReason::PatchIdMatch => Self::PatchIdMatch,
+            IntegrationReason::CommitsMatch => Self::CommitsMatch,
         }
     }
 }
@@ -825,13 +827,15 @@ fn json_default_branch(item: &ListItem, worktree_data: Option<&WorktreeData>) ->
         trees_match: item.committed_trees_match,
         would_merge_add: item.would_merge_add,
         is_patch_id_match: item.is_patch_id_match,
+        is_commits_match: item.is_commits_match,
     };
     let signals_loaded = signals.is_same_commit.is_some()
         && signals.is_ancestor.is_some()
         && signals.has_added_changes.is_some()
         && signals.trees_match.is_some()
         && signals.would_merge_add.is_some()
-        && signals.is_patch_id_match.is_some();
+        && signals.is_patch_id_match.is_some()
+        && signals.is_commits_match.is_some();
     let integration = match check_integration(&signals) {
         // Positive matches are trustworthy even when other signals were
         // seeded: every seed points the negative direction, so a match can
@@ -1185,6 +1189,7 @@ mod tests {
         item.committed_trees_match = Some(false);
         item.would_merge_add = Some(true);
         item.is_patch_id_match = Some(false);
+        item.is_commits_match = Some(false);
     }
 
     #[test]
@@ -1250,15 +1255,33 @@ mod tests {
 
     #[test]
     fn test_integration_partial_signals_is_null() {
+        let pending: [fn(&mut ListItem); 2] = [
+            |item| item.would_merge_add = None,
+            |item| item.is_commits_match = None,
+        ];
+        for unload in pending {
+            let mut item = item_with("feature");
+            load_not_integrated_signals(&mut item);
+            unload(&mut item); // probe still pending
+            let json = to_value(&convert(&item, Collected::default()));
+            assert!(
+                json["default_branch"]
+                    .get("integration")
+                    .is_some_and(|v| v.is_null()),
+                "unloaded signal cannot rule integration out"
+            );
+        }
+    }
+
+    #[test]
+    fn test_integration_commits_match_from_signals() {
         let mut item = item_with("feature");
         load_not_integrated_signals(&mut item);
-        item.would_merge_add = None; // probe still pending
+        item.is_commits_match = Some(true);
         let json = to_value(&convert(&item, Collected::default()));
-        assert!(
-            json["default_branch"]
-                .get("integration")
-                .is_some_and(|v| v.is_null()),
-            "unloaded signal cannot rule integration out"
+        assert_eq!(
+            json["default_branch"]["integration"]["reason"],
+            "commits_match"
         );
     }
 
@@ -1338,6 +1361,7 @@ mod tests {
             (IntegrationReason::TreesMatch, "trees_match"),
             (IntegrationReason::MergeAddsNothing, "merge_adds_nothing"),
             (IntegrationReason::PatchIdMatch, "patch_id_match"),
+            (IntegrationReason::CommitsMatch, "commits_match"),
         ];
         for (reason, expected) in cases {
             let wire = serde_json::to_value(JsonIntegrationReason::from(reason)).unwrap();

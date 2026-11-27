@@ -185,6 +185,7 @@ pub(super) fn seed_skipped_task_defaults(item: &mut ListItem, kind: TaskKind) {
             // Conservative: assume the merge would add changes.
             item.would_merge_add = Some(true);
             item.is_patch_id_match = Some(false);
+            item.is_commits_match = Some(false);
             item.seeded.integration = true;
         }
         TaskKind::IsAncestor => {
@@ -518,6 +519,7 @@ mod tests {
                 trees_match: item.committed_trees_match,
                 would_merge_add: item.would_merge_add,
                 is_patch_id_match: item.is_patch_id_match,
+                is_commits_match: item.is_commits_match,
             };
             assert!(
                 check_integration(&signals).is_none(),

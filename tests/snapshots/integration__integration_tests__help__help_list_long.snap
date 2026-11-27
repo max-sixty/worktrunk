@@ -502,6 +502,7 @@ The single highest-priority state describing the branch's relation to the defaul
  [2m"trees_match"[0m        Different history, but the branch's tree is identical to the default branch's                                                                      
  [2m"merge_adds_nothing"[0m The branch has changes, but merging them leaves the default branch's tree unchanged (e.g. a squash merge where the target advanced on other files) 
  [2m"patch_id_match"[0m     The branch's squashed diff matches a single commit on the default branch (e.g. a GitHub/GitLab squash merge)                                       
+ [2m"commits_match"[0m      Every branch commit matches its own commit on the default branch by patch-id (e.g. a GitHub/Bitbucket rebase merge)                                
 
 [32mreview states[0m
 

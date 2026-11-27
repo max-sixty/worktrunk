@@ -340,12 +340,47 @@ mod tests {
         let value = MergeProbeResult {
             would_merge_add: true,
             is_patch_id_match: false,
+            is_commits_match: true,
         };
         put_merge_add_probe(&repo, "aaaa", "bbbb", value);
         assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), Some(value));
 
         // Asymmetric: swapped args miss
         assert_eq!(merge_add_probe(&repo, "bbbb", "aaaa"), None);
+    }
+
+    /// An entry written before `is_commits_match` existed must miss, not read
+    /// as "no rebase merge": a cached negative from the old probe would hide
+    /// the new check until the target moved.
+    #[test]
+    fn test_merge_add_probe_entry_without_commits_match_misses() {
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+
+        put_merge_add_probe(
+            &repo,
+            "aaaa",
+            "bbbb",
+            MergeProbeResult {
+                would_merge_add: true,
+                is_patch_id_match: false,
+                is_commits_match: false,
+            },
+        );
+        let dir = cache::cache_dir(&repo, KIND_MERGE_ADD_PROBE);
+        let entry = fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .unwrap();
+        fs::write(
+            &entry,
+            r#"{"would_merge_add":true,"is_patch_id_match":false}"#,
+        )
+        .unwrap();
+
+        assert_eq!(merge_add_probe(&repo, "aaaa", "bbbb"), None);
     }
 
     #[test]
@@ -563,6 +598,7 @@ mod tests {
         let tampered = MergeProbeResult {
             would_merge_add: true,
             is_patch_id_match: true,
+            is_commits_match: false,
         };
         fs::write(entries[0].path(), serde_json::to_string(&tampered).unwrap()).unwrap();
 
@@ -803,6 +839,7 @@ mod tests {
             MergeProbeResult {
                 would_merge_add: true,
                 is_patch_id_match: false,
+                is_commits_match: false,
             },
         );
         put_is_ancestor(&repo, "a", "b", true);

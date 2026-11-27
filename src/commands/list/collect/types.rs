@@ -50,6 +50,7 @@ pub(crate) enum TaskResult {
         item_idx: usize,
         would_merge_add: bool,
         is_patch_id_match: bool,
+        is_commits_match: bool,
     },
     /// Whether branch HEAD is ancestor of integration target (same commit or already merged)
     IsAncestor { item_idx: usize, is_ancestor: bool },

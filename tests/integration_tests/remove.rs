@@ -2984,6 +2984,113 @@ fn test_remove_squash_merged_then_same_files_modified(repo: TestRepo) {
     ));
 }
 
+/// Rebase merge where target later modifies the SAME files.
+///
+/// A "Rebase, fast-forward" (Bitbucket) or "Rebase and merge" (GitHub) lands
+/// each branch commit on main under a new SHA, so the branch isn't an
+/// ancestor. Main then edits a file the branch added, so merge-tree conflicts,
+/// and no single main commit holds the branch's whole diff, so the squash
+/// patch-id check misses too. Every branch commit has a patch-id twin on main.
+#[rstest]
+fn test_remove_rebase_merged_then_same_files_modified(repo: TestRepo) {
+    repo.run_git(&["checkout", "-b", "feature-rebase-conflict"]);
+    std::fs::write(repo.root_path().join("feature-a.txt"), "feature a\n").unwrap();
+    repo.run_git(&["add", "feature-a.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature A"]);
+    std::fs::write(repo.root_path().join("feature-b.txt"), "feature b\n").unwrap();
+    repo.run_git(&["add", "feature-b.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature B"]);
+
+    // Main moves on, then the branch's commits are replayed onto it one by one.
+    repo.run_git(&["checkout", "main"]);
+    std::fs::write(repo.root_path().join("other.txt"), "other work\n").unwrap();
+    repo.run_git(&["add", "other.txt"]);
+    repo.run_git(&["commit", "-m", "Other work"]);
+    repo.run_git(&["cherry-pick", "main..feature-rebase-conflict"]);
+
+    // Main advances by modifying a file the branch added.
+    std::fs::write(
+        repo.root_path().join("feature-a.txt"),
+        "feature a\nmore on main\n",
+    )
+    .unwrap();
+    repo.run_git(&["add", "feature-a.txt"]);
+    repo.run_git(&["commit", "-m", "Main advances same file"]);
+
+    let merge_tree_result = repo
+        .git_command()
+        .args([
+            "merge-tree",
+            "--write-tree",
+            "main",
+            "feature-rebase-conflict",
+        ])
+        .run()
+        .unwrap();
+    assert!(
+        !merge_tree_result.status.success(),
+        "merge-tree should report conflicts (both sides modified feature-a.txt)"
+    );
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-rebase-conflict"],
+        None
+    ));
+}
+
+/// Simulate a Bitbucket "Rebase, fast-forward" merge on the remote: another
+/// PR lands first, the branch is rebased onto it and main fast-forwards, then
+/// main edits a file the branch added. The local branch keeps its original
+/// commits. After a fetch, `wt remove` finds each of them on `origin/main`.
+#[rstest]
+fn test_remove_rebase_merged_on_remote(#[from(repo_with_remote)] repo: TestRepo) {
+    let remote_path = repo.remote_path().unwrap();
+
+    repo.run_git(&["checkout", "-b", "feature-remote-rebase"]);
+    std::fs::write(repo.root_path().join("feature.txt"), "feature\n").unwrap();
+    repo.run_git(&["add", "feature.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature file"]);
+    std::fs::write(repo.root_path().join("feature-notes.txt"), "notes\n").unwrap();
+    repo.run_git(&["add", "feature-notes.txt"]);
+    repo.run_git(&["commit", "-m", "Add feature notes"]);
+    repo.run_git(&["push", "-u", "origin", "feature-remote-rebase"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let forge_sim = repo.home_path().join("forge-sim");
+    repo.run_git_in(
+        repo.home_path(),
+        &["clone", remote_path.to_str().unwrap(), "forge-sim"],
+    );
+    std::fs::write(forge_sim.join("other.txt"), "other PR\n").unwrap();
+    repo.run_git_in(&forge_sim, &["add", "other.txt"]);
+    repo.run_git_in(&forge_sim, &["commit", "-m", "Land another PR"]);
+    repo.run_git_in(&forge_sim, &["switch", "feature-remote-rebase"]);
+    repo.run_git_in(&forge_sim, &["rebase", "main"]);
+    repo.run_git_in(&forge_sim, &["switch", "main"]);
+    repo.run_git_in(&forge_sim, &["merge", "--ff-only", "feature-remote-rebase"]);
+    std::fs::write(forge_sim.join("feature.txt"), "feature\nedited on main\n").unwrap();
+    repo.run_git_in(&forge_sim, &["add", "feature.txt"]);
+    repo.run_git_in(&forge_sim, &["commit", "-m", "Edit feature file"]);
+    repo.run_git_in(&forge_sim, &["push", "origin", "main"]);
+
+    repo.run_git(&["fetch", "origin"]);
+    let local_main = repo.git_output(&["rev-parse", "main"]);
+    let origin_main = repo.git_output(&["rev-parse", "origin/main"]);
+    assert_ne!(
+        local_main, origin_main,
+        "local main should be behind origin/main"
+    );
+
+    assert_cmd_snapshot!(make_snapshot_cmd(
+        &repo,
+        "remove",
+        &["feature-remote-rebase"],
+        None
+    ));
+}
+
 /// Simulate a GitHub squash merge: push feature to origin, squash-merge on
 /// the remote side (via a temporary clone), fetch locally, then `wt remove`.
 ///

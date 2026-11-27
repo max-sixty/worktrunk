@@ -424,6 +424,7 @@ The single highest-priority state describing the branch's relation to the defaul
 | `"trees_match"` | Different history, but the branch's tree is identical to the default branch's |
 | `"merge_adds_nothing"` | The branch has changes, but merging them leaves the default branch's tree unchanged (e.g. a squash merge where the target advanced on other files) |
 | `"patch_id_match"` | The branch's squashed diff matches a single commit on the default branch (e.g. a GitHub/GitLab squash merge) |
+| `"commits_match"` | Every branch commit matches its own commit on the default branch by patch-id (e.g. a GitHub/Bitbucket rebase merge) |
 
 ### review states
 
