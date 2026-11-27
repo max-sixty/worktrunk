@@ -1670,19 +1670,10 @@ mod merge_tree_cache_tests {
             if bit_path.exists() {
                 break;
             }
-            if std::time::Instant::now() >= deadline {
-                let entries: Vec<String> = std::fs::read_dir(bit_path.parent().unwrap())
-                    .map(|it| {
-                        it.flatten()
-                            .map(|e| e.file_name().to_string_lossy().into_owned())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                panic!(
-                    "the abandoned probe never recorded its conflict bit.\n\
-                     cache dir entries: {entries:?}"
-                );
-            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the abandoned probe never recorded its conflict bit"
+            );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         // The driver exits 0, so it resolves the conflict itself and git
