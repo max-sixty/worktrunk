@@ -936,6 +936,53 @@ fn test_prune_skips_dirty(mut repo: TestRepo) {
     );
 }
 
+/// Prune leaves a merged worktree alone while a process is running inside it
+/// (like a dirty one), and still removes an idle merged worktree.
+#[cfg(unix)]
+#[rstest]
+fn test_prune_skips_worktree_with_running_process(mut repo: TestRepo) {
+    use crate::common::{wait_for, wait_for_worktree_removed};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use worktrunk::git::reap;
+
+    repo.commit("initial");
+    let busy = repo.add_worktree("busy-merged");
+    let idle = repo.add_worktree("idle-merged");
+    let canonical = std::fs::canonicalize(&busy).unwrap();
+
+    // A detached child whose cwd is the worktree: a dev server, watcher or agent.
+    let mut child = Command::new("sleep")
+        .arg("60")
+        .current_dir(&canonical)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    wait_for(&format!("child {pid} in cwd discovery"), || {
+        reap::processes_under(&canonical)
+            .iter()
+            .any(|p| p.pid == pid)
+    });
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["step", "prune", "--yes", "--min-age=0s"]);
+    let output = cmd.output().unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        output.status.success(),
+        "prune failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    wait_for_worktree_removed(&idle);
+    assert!(busy.exists(), "a worktree with a running process is kept");
+}
+
 /// Dry-run with mixed worktrees + orphan branches shows both counts.
 ///
 /// Exercises the "N worktrees, M branches would be removed (dry run)" path
