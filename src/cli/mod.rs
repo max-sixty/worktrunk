@@ -813,7 +813,7 @@ $ wt list
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
 + fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)
 ```
 
 Include CI status, LLM summaries, and branches without worktrees:
@@ -878,6 +878,8 @@ The leftmost column marks each row by physical presence, from most present to le
 ### Status symbols
 
 The Status column packs five subcolumns, left to right. Working-tree flags combine (`+!?`); each other subcolumn shows only its highest-priority symbol, top row first, and is blank when nothing applies. [JSON output](#json-output) carries each as independent fields.
+
+When space permits, the footer rotates through visible status explanations.
 
 #### Working tree
 

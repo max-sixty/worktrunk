@@ -153,7 +153,7 @@ $ wt list
 @ feature-auth  +   ↑      +27   -8   ↑1       +31                4bc72dc    2h  Add authenticatio…
 ^ main              ^⇡                                    ⇡1      0e631ad    1d  Initial commit
 
-○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path
+○ Showing 2 worktrees, 1 with changes, 1 ahead, hidden: Path  (+ staged files  ↑ ahead of default)
 ```
 
 The `@` marks the current worktree. `+` means staged changes, `↑1` means 1 commit ahead of main, `⇡` means unpushed commits.

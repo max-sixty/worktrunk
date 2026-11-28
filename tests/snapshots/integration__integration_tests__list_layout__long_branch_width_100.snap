@@ -67,4 +67,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Path, Message[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Path, Message  (^ main worktree  | in sync with remote)[0m
