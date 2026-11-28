@@ -743,13 +743,11 @@ fn test_set_and_clear_default_branch() {
 }
 
 /// `switch_previous` / `set_switch_previous` round trip. Exercises
-/// `worktrunk.history` read + write through the bulk-config helpers.
+/// the switch history file read + write.
 #[test]
 fn test_switch_previous_roundtrip() {
     let repo = TestRepo::new();
     let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    // Populate the cache first to hit the in-memory update branch.
-    let _ = r.is_bare();
     assert_eq!(r.switch_previous(), None);
     r.set_switch_previous("feature-a").unwrap();
     assert_eq!(r.switch_previous(), Some("feature-a".to_string()));

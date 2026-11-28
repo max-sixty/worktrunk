@@ -350,7 +350,18 @@ impl Repository {
     }
 
     /// Forget the previous worktree. Returns whether anything was recorded.
+    ///
+    /// Also unsets the `worktrunk.history` and `worktrunk.history-path` keys
+    /// older versions stored history in, which nothing else removes. Each is
+    /// checked in the config snapshot first: `git config --unset-all` takes
+    /// `config.lock` even for a missing key.
     pub fn clear_switch_previous(&self) -> anyhow::Result<bool> {
+        let mut legacy = false;
+        for key in ["worktrunk.history", "worktrunk.history-path"] {
+            if self.config_last(key)?.is_some() {
+                legacy |= self.unset_config(key)?;
+            }
+        }
         let recorded = self.load_switch_history()?;
         let file = self.switch_history_path();
         match std::fs::remove_file(&file) {
@@ -362,7 +373,7 @@ impl Repository {
                 });
             }
         }
-        Ok(recorded.branch().is_some() || recorded.path.is_some())
+        Ok(legacy || recorded.branch().is_some() || recorded.path.is_some())
     }
 
     /// The worktree `wt switch` last left, while it is still registered and
@@ -1213,6 +1224,38 @@ mod tests {
 
         std::fs::remove_file(&lock).unwrap();
         assert_eq!(std::fs::read(&config).unwrap(), before);
+    }
+
+    #[test]
+    fn test_clear_switch_previous_drops_legacy_config_keys() {
+        // Keys an older wt left in the shared config are removed by a clear,
+        // and count as something cleared.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "worktrunk.history", "old"]);
+        test.run_git(&["config", "worktrunk.history-path", "/old"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(repo.clear_switch_previous().unwrap());
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.config_value("worktrunk.history").unwrap(), None);
+        assert_eq!(fresh.config_value("worktrunk.history-path").unwrap(), None);
+        assert!(!fresh.clear_switch_previous().unwrap());
+    }
+
+    #[test]
+    fn test_switch_history_io_errors_surface() {
+        // A directory where the history file belongs can be neither read nor
+        // removed; both report the failure instead of treating it as empty.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::create_dir_all(repo.switch_history_path()).unwrap();
+        assert!(repo.switch_previous_worktree().is_err());
+        assert_eq!(repo.switch_previous(), None);
+        assert!(
+            repo.clear_switch_previous()
+                .unwrap_err()
+                .to_string()
+                .contains("switch-history.json")
+        );
     }
 
     #[test]
