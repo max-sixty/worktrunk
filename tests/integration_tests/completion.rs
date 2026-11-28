@@ -6,11 +6,14 @@ use crate::common::{
 use insta::Settings;
 use rstest::rstest;
 
+/// At least one suggestion, and every suggestion an option. Empty output is not
+/// "only options": a completer that returned nothing would pass `all` alone.
 fn only_option_suggestions(stdout: &str) -> bool {
-    stdout
+    let mut lines = stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .all(|line| line.starts_with('-'))
+        .peekable();
+    lines.peek().is_some() && lines.all(|line| line.starts_with('-'))
 }
 
 fn has_any_options(stdout: &str) -> bool {
@@ -1534,6 +1537,8 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
         vec!["wt", "-C", path, "switch", ""],
         vec!["wt", "switch", "-C", path, ""],
     ] {
+        // Each form must write its own trace, not pass on the previous one's.
+        let _ = std::fs::remove_dir_all(other.root_path().join(".git/wt/logs"));
         let output = repo
             .completion_cmd(&args)
             .env("WORKTRUNK_VERBOSE", "2")
