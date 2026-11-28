@@ -269,17 +269,10 @@ fn read_or_mint_incarnation(path: &Path) -> Option<String> {
         return Some(id);
     }
     let id = format!("{:032x}", fastrand::u128(..));
-    match worktrunk::utils::write_new_atomically(path, &format!("{id}\n")) {
-        Ok(()) => Some(id),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => read_sidecar(path),
-        Err(error) => {
-            tracing::debug!(
-                "failed to record worktree incarnation {}: {error}",
-                path.display()
-            );
-            None
-        }
-    }
+    // A lost race or an unwritable git dir both re-read. The winner's id is
+    // kept; a failed write with nothing on disk leaves the log `null`.
+    let _ = worktrunk::utils::write_new_atomically(path, &format!("{id}\n"));
+    read_sidecar(path)
 }
 
 /// Spawn a detached background process with output redirected to a log file.
