@@ -127,6 +127,154 @@ fn create_detach_log(
     Ok((log_path, log_file))
 }
 
+/// Sidecar written next to a per-branch hook log: `{path}.head`.
+///
+/// The log walker only collects `.log` files, so this name stays out of the
+/// listing. It holds the branch OID at the moment the log was created.
+pub(crate) fn log_head_sidecar(log_path: &Path) -> PathBuf {
+    sidecar_path(log_path, ".head")
+}
+
+/// Sidecar written next to a per-branch hook log: `{path}.incarnation`.
+///
+/// Holds the worktree id from [`worktree_incarnation`] at the moment the log
+/// was created. A later worktree of the same branch name does not rewrite it.
+pub(crate) fn log_incarnation_sidecar(log_path: &Path) -> PathBuf {
+    sidecar_path(log_path, ".incarnation")
+}
+
+fn sidecar_path(log_path: &Path, suffix: &str) -> PathBuf {
+    let mut name = log_path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+fn record_sidecar(path: &Path, value: Option<&str>) -> std::io::Result<()> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => std::fs::write(path, format!("{value}\n")),
+        None => match std::fs::remove_file(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    }
+}
+
+fn record_sidecar_best_effort(path: &Path, value: Option<&str>, what: &str) {
+    if let Err(err) = record_sidecar(path, value) {
+        tracing::debug!("failed to record {what} {}: {err}", path.display());
+    }
+}
+
+/// Record `head` beside `log_path`, or remove a sidecar left by an earlier run.
+///
+/// A missing OID must not leave the previous run's file in place: the log is
+/// truncated on each run, and a stale sidecar would attribute the new output
+/// to the old commit.
+pub(crate) fn record_log_head(log_path: &Path, head: Option<&str>) -> std::io::Result<()> {
+    record_sidecar(&log_head_sidecar(log_path), head)
+}
+
+/// Record the OID, ignoring a failure. A missing sidecar reads back as
+/// `head: null`, and failing the spawn or the step would skip the hook itself.
+pub(crate) fn record_log_head_best_effort(log_path: &Path, head: Option<&str>) {
+    if let Err(err) = record_log_head(log_path, head) {
+        tracing::debug!(
+            "failed to record hook log head {}: {err}",
+            log_head_sidecar(log_path).display()
+        );
+    }
+}
+
+pub(crate) fn record_log_incarnation_best_effort(log_path: &Path, id: Option<&str>) {
+    record_sidecar_best_effort(
+        &log_incarnation_sidecar(log_path),
+        id,
+        "hook log incarnation",
+    );
+}
+
+/// Branch-tip OID, only when `refs/heads/<branch>` still exists.
+///
+/// No fallback to the worktree HEAD: `post-remove` runs in the destination
+/// after the branch is gone, and that HEAD is a different commit.
+fn branch_ref_oid(repo: &Repository, branch: &str) -> Option<String> {
+    if branch.is_empty() || branch == "HEAD" || branch == "detached" {
+        return None;
+    }
+    let spec = format!("refs/heads/{branch}");
+    repo.run_command(&["rev-parse", "--verify", "--end-of-options", &spec])
+        .ok()
+        .map(|oid| oid.trim().to_string())
+        .filter(|oid| !oid.is_empty())
+}
+
+fn read_sidecar(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
+    read_sidecar(&log_head_sidecar(log_path))
+}
+
+pub(crate) fn read_log_incarnation(log_path: &Path) -> Option<String> {
+    read_sidecar(&log_incarnation_sidecar(log_path))
+}
+
+/// Id of this worktree's life, stored as `wt-incarnation` in its git directory.
+///
+/// The same path returns the same id. Removing the worktree deletes the file
+/// with the git directory, and the next checkout of that branch name mints
+/// another one, including when both checkouts point at the same commit.
+///
+/// Minting happens when a hook log is written. Planning a removal only reads
+/// the file, so a dry run does not create one.
+pub(crate) fn worktree_incarnation(repo: &Repository, worktree_path: &Path) -> Option<String> {
+    let dir = repo.worktree_at(worktree_path).git_dir().ok()?;
+    read_or_mint_incarnation(&dir.join("wt-incarnation"))
+}
+
+/// `wt-incarnation` if a hook already wrote one. Does not create the file.
+pub(crate) fn read_worktree_incarnation(repo: &Repository, worktree_path: &Path) -> Option<String> {
+    let dir = repo.worktree_at(worktree_path).git_dir().ok()?;
+    read_sidecar(&dir.join("wt-incarnation"))
+}
+
+/// Id to store beside a hook log.
+///
+/// A removal pipeline passes the id it read while the worktree still existed,
+/// including `None` when that checkout never minted one. Any other run,
+/// including a manual `wt hook post-remove` in a live worktree, reads or mints
+/// the id of `worktree_path`.
+pub(crate) fn hook_log_incarnation(
+    repo: &Repository,
+    worktree_path: &Path,
+    from_removal: bool,
+    removed_incarnation: Option<&str>,
+) -> Option<String> {
+    if from_removal {
+        removed_incarnation.map(str::to_owned)
+    } else {
+        worktree_incarnation(repo, worktree_path)
+    }
+}
+
+fn read_or_mint_incarnation(path: &Path) -> Option<String> {
+    if let Some(id) = read_sidecar(path) {
+        return Some(id);
+    }
+    let id = format!("{:032x}", fastrand::u128(..));
+    // A lost race or an unwritable git dir both re-read. The winner's id is
+    // kept; a failed write with nothing on disk leaves the log `null`.
+    let _ = worktrunk::utils::write_new_atomically(path, &format!("{id}\n"));
+    read_sidecar(path)
+}
+
 /// Spawn a detached background process with output redirected to a log file.
 ///
 /// The process will be fully detached from the parent:
@@ -152,7 +300,19 @@ pub fn spawn_detached(
         .map(OsString::from)
         .chain(args.iter().cloned())
         .collect();
-    spawn_detached_exec(
+    let (head, incarnation) = if matches!(hook_log, HookLog::Shared(_)) {
+        (None, None)
+    } else {
+        (
+            branch_ref_oid(repo, branch),
+            // Internal removal logs run in the destination. The removed
+            // checkout's id belongs on the post-remove hook pipeline, which
+            // receives it from the plan. Minting one here would write into
+            // the destination's git directory.
+            None::<String>,
+        )
+    };
+    let log_path = spawn_detached_exec(
         repo,
         worktree_path,
         &shell.executable,
@@ -160,7 +320,12 @@ pub fn spawn_detached(
         branch,
         hook_log,
         &[],
-    )
+    )?;
+    if !matches!(hook_log, HookLog::Shared(_)) {
+        record_log_head_best_effort(&log_path, head.as_deref());
+        record_log_incarnation_best_effort(&log_path, incarnation.as_deref());
+    }
+    Ok(log_path)
 }
 
 /// Spawn a detached background process by executing a binary directly.
@@ -486,5 +651,133 @@ mod tests {
                 .to_slash_lossy(),
             @"/repo/.git/wt/logs/internal-trash-sweep.log"
         );
+    }
+
+    #[test]
+    fn record_log_head_writes_and_clears() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+
+        record_log_head(&log, Some("abc\n")).unwrap();
+        assert_eq!(read_log_head(&log).as_deref(), Some("abc"));
+
+        record_log_head(&log, None).unwrap();
+        assert_eq!(read_log_head(&log), None);
+        record_log_head(&log, None).unwrap();
+    }
+
+    #[test]
+    fn branch_ref_oid_is_that_branch_tip() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let main = test.head_sha();
+        test.run_git(&["checkout", "-b", "feature"]);
+        test.commit("feature");
+        let feature = test.head_sha();
+        test.run_git(&["checkout", "main"]);
+
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            branch_ref_oid(&repo, "feature").as_deref(),
+            Some(feature.as_str())
+        );
+        assert_ne!(
+            branch_ref_oid(&repo, "feature").as_deref(),
+            Some(main.as_str())
+        );
+        assert_eq!(branch_ref_oid(&repo, "missing"), None);
+        assert_eq!(branch_ref_oid(&repo, "HEAD"), None);
+        assert_eq!(branch_ref_oid(&repo, "detached"), None);
+    }
+
+    /// A sidecar that exists but holds no OID reads as `null`, the same as a
+    /// missing one. The JSON entry must not surface a stale or empty `head`.
+    #[test]
+    fn read_log_head_is_none_for_an_empty_sidecar() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+        std::fs::write(log_head_sidecar(&log), "").unwrap();
+
+        assert_eq!(read_log_head(&log), None);
+
+        std::fs::write(log_head_sidecar(&log), "  \n").unwrap();
+        assert_eq!(read_log_head(&log), None, "whitespace-only is empty too");
+    }
+
+    /// A sidecar write that fails is logged, not returned: the caller is about
+    /// to run a hook, and skipping it over bookkeeping would be the wrong
+    /// trade. A directory where the sidecar should be makes the write fail.
+    #[test]
+    fn record_log_head_best_effort_swallows_a_failed_write() {
+        let dir = worktrunk::testing::test_tempdir();
+        let log = dir.path().join("hook.log");
+        std::fs::write(&log, "output").unwrap();
+        std::fs::create_dir(log_head_sidecar(&log)).unwrap();
+
+        record_log_head_best_effort(&log, Some("abc"));
+
+        // The hook log itself is untouched, and `head` reads as null.
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "output");
+        assert_eq!(read_log_head(&log), None);
+        assert!(log_head_sidecar(&log).is_dir());
+    }
+
+    /// The same worktree keeps one id. A second checkout of the name, even at
+    /// the same commit, does not.
+    #[test]
+    fn worktree_incarnation_changes_when_the_worktree_is_replaced() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        let first = worktree_incarnation(&repo, test.root_path()).unwrap();
+        assert_eq!(
+            worktree_incarnation(&repo, test.root_path()).as_deref(),
+            Some(first.as_str())
+        );
+
+        let path = test.root_path().parent().unwrap().join("repo.feature");
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+        let feature = worktree_incarnation(&repo, &path).unwrap();
+        assert_ne!(feature, first);
+
+        test.run_git(&["worktree", "remove", "--force", path.to_str().unwrap()]);
+        test.run_git(&["branch", "-D", "feature"]);
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+        let again = worktree_incarnation(&repo, &path).unwrap();
+        assert_ne!(again, feature);
+        assert_eq!(
+            test.git_output(&["rev-parse", "feature"]),
+            test.git_output(&["rev-parse", "main"])
+        );
+    }
+
+    /// Planning reads an id a hook already wrote and does not create one.
+    /// A removal log uses that captured value instead of the destination.
+    #[test]
+    fn removal_uses_the_id_it_read_and_does_not_mint() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        let path = test.root_path().parent().unwrap().join("repo.feature");
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+
+        assert_eq!(read_worktree_incarnation(&repo, &path), None);
+        let git_dir = repo.worktree_at(&path).git_dir().unwrap();
+        assert!(!git_dir.join("wt-incarnation").exists());
+
+        let id = worktree_incarnation(&repo, &path).unwrap();
+        assert_eq!(
+            read_worktree_incarnation(&repo, &path).as_deref(),
+            Some(id.as_str())
+        );
+
+        assert_eq!(
+            hook_log_incarnation(&repo, test.root_path(), true, Some(&id)).as_deref(),
+            Some(id.as_str())
+        );
+        assert_eq!(
+            hook_log_incarnation(&repo, test.root_path(), true, None),
+            None
+        );
+        assert!(!repo.wt_dir().join("incarnations").exists());
     }
 }

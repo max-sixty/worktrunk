@@ -196,6 +196,8 @@ pub fn finish_after_merge(
         // No config snapshot: `pre-remove` / `post-remove` were selected and
         // frozen into `plan` at the gate (anchored at `feature_path`), so the
         // executor needs no config — it runs only the frozen `plan`.
+        let removed_incarnation =
+            crate::commands::process::read_worktree_incarnation(repo, &worktree_root);
         let remove_result = RemovalPlan::Worktree {
             main_path: destination_path.clone(),
             worktree_path: worktree_root,
@@ -206,6 +208,7 @@ pub fn finish_after_merge(
             integration_reason,
             force_worktree: false,
             removed_commit: feature_commit.clone(),
+            removed_incarnation,
             branch_checked_out_at,
         };
         // The fate is dropped: merge's own reporting (`removed` in the JSON

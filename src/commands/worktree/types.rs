@@ -321,6 +321,10 @@ pub enum RemovalPlan {
         /// Used for post-remove hook template variables so they reference the
         /// removed worktree's state, not the execution context.
         removed_commit: Option<String>,
+        /// Existing `wt-incarnation` of the removed worktree, read at planning
+        /// time and not created here. `None` when that checkout never ran a
+        /// hook. Post-remove logs copy this value; planning stays read-only.
+        removed_incarnation: Option<String>,
         /// A surviving checkout of `branch_name`, when one exists. `Some`
         /// retains the branch and forces `deletion_mode` to `Keep`; see
         /// [`SharedBranchCheckout`].
@@ -486,6 +490,7 @@ mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         assert_eq!(removed.branch_name(), Some("feature"));
@@ -654,6 +659,7 @@ mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: Some("abc1234567890".to_string()),
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         match result {
@@ -667,6 +673,7 @@ mod tests {
                 integration_reason: _,
                 force_worktree,
                 removed_commit,
+                removed_incarnation: _,
                 branch_checked_out_at,
             } => {
                 assert_eq!(main_path.to_str().unwrap(), "/main");
@@ -761,6 +768,7 @@ mod tests {
             integration_reason: None,
             force_worktree: true,
             removed_commit: None, // Detached HEAD may not have meaningful commit
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         match result {

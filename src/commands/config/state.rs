@@ -398,6 +398,16 @@ impl LogRow {
             let map = obj.as_object_mut().expect("json! produced an object");
             let branch = branch_by_dir.get(&s.branch_dir).cloned().flatten();
             map.insert("branch".into(), branch.into());
+            map.insert(
+                "head".into(),
+                crate::commands::process::read_log_head(Path::new(&self.path))
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
+            map.insert(
+                "incarnation".into(),
+                crate::commands::process::read_log_incarnation(Path::new(&self.path))
+                    .map_or(serde_json::Value::Null, Into::into),
+            );
             map.insert("source".into(), s.source.clone().into());
             map.insert(
                 "hook_type".into(),
@@ -657,8 +667,11 @@ pub(super) fn render_all_log_sections(out: &mut String, repo: &Repository) -> an
 ///
 /// JSON output emits three arrays keyed by category, each entry carrying
 /// `file`, `path`, `size`, and `modified_at`. Hook-output entries additionally
-/// expose `branch`, `source`, `hook_type`, and `name` so consumers can filter
-/// with `jq` rather than parsing the slash-delimited `file` path.
+/// expose `branch`, `head`, `incarnation`, `source`, `hook_type`, and `name`
+/// so consumers can filter with `jq` rather than parsing the slash-delimited
+/// `file` path. `head` is the full OID the branch pointed at when that log was
+/// written, or `null` when the log has no recorded OID. `incarnation` is the
+/// worktree id from that same moment.
 pub fn handle_logs_list(format: SwitchFormat) -> anyhow::Result<()> {
     let repo = Repository::current()?;
 

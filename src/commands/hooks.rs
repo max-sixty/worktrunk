@@ -88,7 +88,7 @@ use super::command_executor::{
     execute_pipeline_foreground, hook_error_wrapper, prepare_steps,
 };
 use super::hook_announcement::{SourcedStep, format_pipeline_summary};
-use crate::commands::process::{HookLog, spawn_detached_exec};
+use crate::commands::process::{HookLog, record_log_head_best_effort, spawn_detached_exec};
 use crate::output::DirectivePassthrough;
 
 use super::hook_filter::{ParsedFilter, selected_hook_configs};
@@ -262,6 +262,11 @@ struct PendingPipeline {
     hook_type: HookType,
     display_path: Option<PathBuf>,
     steps: Vec<SourcedStep>,
+    /// True when this post-remove pipeline was registered by a removal. The
+    /// id is whatever planning read, and `None` stays `None` instead of
+    /// minting one in the destination worktree.
+    from_removal: bool,
+    removed_incarnation: Option<String>,
 }
 
 impl<'a> HookAnnouncer<'a> {
@@ -293,6 +298,8 @@ impl<'a> HookAnnouncer<'a> {
                 hook_type,
                 display_path: display_path.map(Path::to_path_buf),
                 steps,
+                from_removal: false,
+                removed_incarnation: None,
             });
         }
     }
@@ -324,6 +331,21 @@ impl<'a> HookAnnouncer<'a> {
         )?;
         self.add_steps(ctx, hook_type, display_path, flat);
         Ok(())
+    }
+
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Mark post-remove pipelines registered since `from` as coming from a
+    /// removal, and give them the id planning read.
+    pub fn assign_removed_incarnation(&mut self, from: usize, id: Option<String>) {
+        for pipeline in &mut self.pending[from..] {
+            if pipeline.hook_type == HookType::PostRemove {
+                pipeline.from_removal = true;
+                pipeline.removed_incarnation = id.clone();
+            }
+        }
     }
 
     /// Record that this command removed the worktree at `path`, so a pipeline
@@ -586,6 +608,8 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         hook_type,
         source,
         steps: pipeline.steps.into_iter().map(|step| step.step).collect(),
+        from_removal: pipeline.from_removal,
+        removed_incarnation: pipeline.removed_incarnation,
     };
 
     let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
@@ -594,8 +618,16 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
 
     let hook_log = HookLog::hook(source, hook_type, "runner");
     let log_label = format!("{hook_type} {source} runner");
+    // Same frozen `{{ commit }}` the steps run against. The runner log is
+    // opened here, before those steps, so it must not rev-parse again.
+    let head = spec.steps.iter().find_map(|step| {
+        step.commands()
+            .iter()
+            .find_map(|cmd| cmd.context.get("commit"))
+            .map(str::to_owned)
+    });
 
-    if let Err(err) = spawn_detached_exec(
+    match spawn_detached_exec(
         repo,
         &spec.worktree_path,
         &wt_bin,
@@ -604,13 +636,27 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         &hook_log,
         &spec_json,
     ) {
-        eprintln!(
-            "{}",
-            warning_message(format!("Failed to spawn pipeline: {err:#}"))
-        );
-    } else {
-        let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
-        worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
+        Err(err) => {
+            eprintln!(
+                "{}",
+                warning_message(format!("Failed to spawn pipeline: {err:#}"))
+            );
+        }
+        Ok(log_path) => {
+            record_log_head_best_effort(&log_path, head.as_deref());
+            let incarnation = crate::commands::process::hook_log_incarnation(
+                repo,
+                &spec.worktree_path,
+                spec.from_removal,
+                spec.removed_incarnation.as_deref(),
+            );
+            crate::commands::process::record_log_incarnation_best_effort(
+                &log_path,
+                incarnation.as_deref(),
+            );
+            let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
+            worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
+        }
     }
 
     Ok(())

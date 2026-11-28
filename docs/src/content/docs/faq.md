@@ -143,6 +143,7 @@ Worktrunk stores repository state, caches, and logs under `.git/`:
 | `.git/wt/cache/summary/{branch}/{hash}.json` | Cached LLM branch summaries, content-addressed by diff hash | `wt list --full`, `wt switch` (when `[list] summary = true`) |
 | `.git/wt/cache/status-explanations/shown.json` | Status explanations shown in the current footer rotation | `wt list` |
 | `.git/wt/cache/picker-preview/*.json` | Rendered preview panes for the interactive picker | `wt switch` |
+| `.git/wt-incarnation`, `.git/worktrees/<name>/wt-incarnation` | Id of that worktree checkout, copied onto hook logs as `incarnation` | First hook run in that worktree |
 | `.git/wt/logs/{branch}/**/*.log` | Background hook output (nested per branch) | Hooks, background `wt remove` |
 | `.git/wt/logs/commands.jsonl` | Command audit log (~2MB max) | Hooks, LLM commands |
 | `.git/wt/logs/trace.log` | Human debug trace for issue reporting | Running with `-vv` |

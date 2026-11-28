@@ -2228,6 +2228,8 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "size": "<SIZE>",
               "modified_at": "<MTIME>",
               "branch": null,
+              "head": null,
+              "incarnation": null,
               "source": "internal",
               "hook_type": null,
               "name": "remove"
@@ -2238,6 +2240,8 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "size": "<SIZE>",
               "modified_at": "<MTIME>",
               "branch": "feature",
+              "head": null,
+              "incarnation": null,
               "source": "user",
               "hook_type": "post-start",
               "name": "npm"
@@ -3133,6 +3137,275 @@ fn test_logs_get_json_internal_op_structure(repo: TestRepo) {
     assert_eq!(hook["hook_type"], serde_json::Value::Null);
     assert_eq!(hook["name"], "remove");
     assert_eq!(hook["branch"], "feature");
+    assert_eq!(hook["head"], serde_json::Value::Null);
+}
+
+/// `head` is the OID written beside the log, not the branch's current tip.
+#[rstest]
+fn test_logs_get_json_head_is_the_recorded_oid(repo: TestRepo) {
+    let log_dir = repo.root_path().join(".git/wt/logs");
+    let relative = hook_log_rel_path("main", "user", "post-start", "server");
+    write_log_at(&log_dir, &relative, "output");
+    let recorded = "0123456789abcdef0123456789abcdef01234567";
+    std::fs::write(
+        format!("{}.head", log_dir.join(&relative).display()),
+        format!("{recorded}\n"),
+    )
+    .unwrap();
+    repo.run_git(&["commit", "--allow-empty", "-m", "move HEAD"]);
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(parsed["hook_output"][0]["head"], recorded);
+    assert!(parsed["command_log"][0].get("head").is_none());
+}
+
+/// A background hook records the branch OID when it opens the log, and a
+/// later commit does not change that recorded value.
+#[rstest]
+fn test_background_hook_records_branch_oid(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo recorded""#);
+    let head = repo.head_sha();
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "post-start", "--yes"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sidecar = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start")
+        .join("runner.log.head");
+    crate::common::wait_for_file_content(&sidecar);
+    assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), head);
+    let incarnation_sidecar = sidecar.with_file_name("runner.log.incarnation");
+    crate::common::wait_for_file_content(&incarnation_sidecar);
+    let git_dir = repo.git_output(&["rev-parse", "--absolute-git-dir"]);
+    let incarnation =
+        std::fs::read_to_string(std::path::Path::new(&git_dir).join("wt-incarnation")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&incarnation_sidecar)
+            .unwrap()
+            .trim(),
+        incarnation.trim()
+    );
+
+    repo.commit("later");
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let runner = parsed["hook_output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "runner")
+        .unwrap();
+    assert_eq!(runner["head"], head);
+    assert_ne!(runner["head"], repo.head_sha());
+    assert_eq!(runner["incarnation"], incarnation.trim());
+}
+
+/// A sidecar that cannot be written does not skip the hook. The JSON fields
+/// stay null, which is what a missing sidecar already means.
+#[rstest]
+fn test_hook_log_sidecar_failure_still_runs_the_hook(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo recorded""#);
+    let log_dir = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start");
+    std::fs::create_dir_all(&log_dir).unwrap();
+    std::fs::create_dir(log_dir.join("runner.log.head")).unwrap();
+    std::fs::create_dir(log_dir.join("runner.log.incarnation")).unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "post-start", "--yes"]);
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let step_log = log_dir.join("cmd-0.log");
+    crate::common::wait_for_file_content(&step_log);
+    assert!(
+        std::fs::read_to_string(&step_log)
+            .unwrap()
+            .contains("recorded"),
+        "the hook must run even when the runner sidecar cannot be written"
+    );
+
+    let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let runner = parsed["hook_output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "runner")
+        .unwrap();
+    assert_eq!(runner["head"], serde_json::Value::Null);
+    assert_eq!(runner["incarnation"], serde_json::Value::Null);
+}
+
+/// Removing a worktree records the id that checkout already had. Creating the
+/// branch name again, even at the same commit, gets a new id, and a manual
+/// `wt hook post-remove` there records the new one.
+#[rstest]
+fn test_post_remove_keeps_the_removed_worktrees_id_only(mut repo: TestRepo) {
+    repo.write_test_config(
+        r#"post-start = "echo recorded"
+post-remove = "echo removed"
+"#,
+    );
+    let worktree = repo.add_worktree("feature");
+    let mut start = repo.wt_command();
+    start.current_dir(&worktree);
+    start.args(["hook", "post-start", "--yes"]);
+    let output = start.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let git_dir = repo.git_output(&[
+        "-C",
+        worktree.to_str().unwrap(),
+        "rev-parse",
+        "--absolute-git-dir",
+    ]);
+    let first_id =
+        std::fs::read_to_string(std::path::Path::new(&git_dir).join("wt-incarnation")).unwrap();
+    let first_id = first_id.trim().to_string();
+    assert!(!first_id.is_empty());
+
+    let mut remove = repo.wt_command();
+    remove.args(["remove", "feature", "--yes", "--force-delete"]);
+    let output = remove.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let sidecar = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("feature"))
+        .join("user")
+        .join("post-remove")
+        .join("runner.log.incarnation");
+    crate::common::wait_for_file_content(&sidecar);
+    assert_eq!(
+        std::fs::read_to_string(&sidecar).unwrap().trim(),
+        first_id,
+        "post-remove must record the id read before the worktree was deleted"
+    );
+
+    repo.run_git(&[
+        "worktree",
+        "add",
+        "-b",
+        "feature",
+        worktree.to_str().unwrap(),
+    ]);
+    let mut start = repo.wt_command();
+    start.current_dir(&worktree);
+    start.args(["hook", "post-start", "--yes"]);
+    let output = start.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let git_dir = repo.git_output(&[
+        "-C",
+        worktree.to_str().unwrap(),
+        "rev-parse",
+        "--absolute-git-dir",
+    ]);
+    let second_id =
+        std::fs::read_to_string(std::path::Path::new(&git_dir).join("wt-incarnation")).unwrap();
+    let second_id = second_id.trim().to_string();
+    assert_ne!(second_id, first_id);
+
+    let mut again = repo.wt_command();
+    again.current_dir(&worktree);
+    again.args(["hook", "post-remove", "--yes"]);
+    let output = again.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let current = std::fs::read_to_string(&sidecar).unwrap_or_default();
+        if current.trim() == second_id {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "manual post-remove recorded {current:?}, not the live worktree id {second_id}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// A runner log that cannot be opened fails the pipeline's spawn, and the
+/// hook never runs. That failure is reported on stderr rather than swallowed:
+/// a hook the user configured silently not running is the worst outcome.
+/// A directory where the log file belongs makes the open fail.
+#[rstest]
+fn test_background_hook_spawn_failure_is_reported(repo: TestRepo) {
+    repo.write_test_config(r#"post-start = "echo never-runs""#);
+    let runner_log_dir = crate::common::resolve_git_common_dir(repo.root_path())
+        .join("wt/logs")
+        .join(worktrunk::path::sanitize_for_filename("main"))
+        .join("user")
+        .join("post-start");
+    std::fs::create_dir_all(&runner_log_dir).unwrap();
+    // The leaf, where the open lands. `prepare_log_file` checks only ancestors.
+    std::fs::create_dir(runner_log_dir.join("runner.log")).unwrap();
+
+    let mut cmd = repo.wt_command();
+    cmd.args(["hook", "post-start", "--yes"]);
+    let output = cmd.output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("Failed to spawn pipeline"),
+        "the spawn failure must reach stderr; stderr:\n{stderr}"
+    );
+    // Nothing was spawned, so neither the step's own log (an unnamed step is
+    // `cmd-0`) nor the runner's OID sidecar was written. Both exist only after
+    // a successful spawn.
+    assert!(
+        !runner_log_dir.join("cmd-0.log").exists(),
+        "the hook step must not have run"
+    );
+    assert!(
+        !runner_log_dir.join("runner.log.head").exists(),
+        "no OID is recorded for a pipeline that never spawned"
+    );
 }
 
 /// `branch` is the real branch name, not the sanitized log directory, so

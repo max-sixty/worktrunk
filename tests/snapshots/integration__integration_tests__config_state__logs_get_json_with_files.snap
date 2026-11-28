@@ -18,6 +18,8 @@ expression: "String::from_utf8_lossy(&output.stdout)"
       "size": "<SIZE>",
       "modified_at": "<TIMESTAMP>",
       "branch": "main",
+      "head": null,
+      "incarnation": null,
       "source": "user",
       "hook_type": "post-start",
       "name": "server"

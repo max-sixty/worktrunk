@@ -91,6 +91,12 @@ pub(super) struct PipelineSpec {
     pub hook_type: HookType,
     pub source: HookSource,
     pub steps: Vec<PreparedStep>,
+    /// Set for a post-remove pipeline spawned by removal. See
+    /// [`crate::commands::process::hook_log_incarnation`].
+    #[serde(default)]
+    pub from_removal: bool,
+    #[serde(default)]
+    pub removed_incarnation: Option<String>,
 }
 
 /// Run a serialized pipeline from stdin.
@@ -116,6 +122,12 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
     let log_dir = repo.wt_logs_dir();
+    let incarnation = super::process::hook_log_incarnation(
+        &repo,
+        &spec.worktree_path,
+        spec.from_removal,
+        spec.removed_incarnation.as_deref(),
+    );
 
     let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);
     let mut cmd_index = 0usize;
@@ -124,7 +136,13 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         match step {
             PreparedStep::Single(cmd) => {
                 let log_name = command_log_name(cmd.name.as_deref(), cmd_index);
-                let log_file = create_command_log(&spec, &log_dir, &log_name)?;
+                let log_file = create_command_log(
+                    &spec,
+                    &log_dir,
+                    &log_name,
+                    cmd.context.get("commit"),
+                    incarnation.as_deref(),
+                )?;
                 let expanded =
                     expand_shell_template(&cmd.template, &cmd.context, &repo, &cmd.template_name)?;
                 let (mut child, mut trace) =
@@ -140,7 +158,14 @@ pub fn run_pipeline() -> anyhow::Result<()> {
                 cmd_index += 1;
             }
             PreparedStep::Concurrent(commands) => {
-                run_concurrent_group(commands, &spec, &repo, &log_dir, &mut cmd_index)?;
+                run_concurrent_group(
+                    commands,
+                    &spec,
+                    &repo,
+                    &log_dir,
+                    &mut cmd_index,
+                    incarnation.as_deref(),
+                )?;
             }
         }
     }
@@ -226,6 +251,7 @@ fn run_concurrent_group(
     repo: &Repository,
     log_dir: &Path,
     cmd_index: &mut usize,
+    incarnation: Option<&str>,
 ) -> anyhow::Result<()> {
     let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);
     let serial = super::force_serial_concurrent();
@@ -238,7 +264,13 @@ fn run_concurrent_group(
     let spawn_result = (|| -> anyhow::Result<()> {
         for cmd in commands {
             let log_name = command_log_name(cmd.name.as_deref(), *cmd_index);
-            let log_file = create_command_log(spec, log_dir, &log_name)?;
+            let log_file = create_command_log(
+                spec,
+                log_dir,
+                &log_name,
+                cmd.context.get("commit"),
+                incarnation,
+            )?;
             let expanded =
                 expand_shell_template(&cmd.template, &cmd.context, repo, &cmd.template_name)?;
             let spawned = spawn_shell_command(&expanded, &spec.worktree_path, log_file)
@@ -300,15 +332,25 @@ fn command_log_name(name: Option<&str>, index: usize) -> String {
 }
 
 /// Create a per-command log file in the repository's log directory.
-fn create_command_log(spec: &PipelineSpec, log_dir: &Path, name: &str) -> anyhow::Result<fs::File> {
+fn create_command_log(
+    spec: &PipelineSpec,
+    log_dir: &Path,
+    name: &str,
+    head: Option<&str>,
+    incarnation: Option<&str>,
+) -> anyhow::Result<fs::File> {
     let hook_log = HookLog::hook(spec.source, spec.hook_type, name);
     let relative_path = hook_log.path(Path::new(""), &spec.branch);
-    worktrunk::utils::open_log_file(log_dir, &relative_path, false).with_context(|| {
-        format!(
-            "failed to create log file: {}",
-            log_dir.join(relative_path).display()
-        )
-    })
+    let log_path = log_dir.join(&relative_path);
+    let file = worktrunk::utils::open_log_file(log_dir, &relative_path, false)
+        .with_context(|| format!("failed to create log file: {}", log_path.display()))?;
+    // `commit` is the frozen `{{ commit }}` the step runs against, including
+    // the removed commit on post-remove. A fresh rev-parse would see the
+    // destination worktree instead. A failed sidecar write leaves `head` null
+    // and must not skip the hook.
+    super::process::record_log_head_best_effort(&log_path, head);
+    super::process::record_log_incarnation_best_effort(&log_path, incarnation);
+    Ok(file)
 }
 
 #[cfg(all(test, unix))]
