@@ -2275,6 +2275,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "modified_at": "<MTIME>",
               "branch": null,
               "head": null,
+              "incarnation": null,
               "source": "internal",
               "hook_type": null,
               "name": "remove"
@@ -2286,6 +2287,7 @@ fn test_state_get_json_with_logs(repo: TestRepo) {
               "modified_at": "<MTIME>",
               "branch": "feature",
               "head": null,
+              "incarnation": null,
               "source": "user",
               "hook_type": "post-start",
               "name": "npm"
