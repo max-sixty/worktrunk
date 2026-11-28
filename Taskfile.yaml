@@ -279,7 +279,7 @@ tasks:
         ls -lh "$OUTPUT_DIR"/*.png
 
   bench-llm-commits:
-    desc: Benchmark LLM commit message tools (claude, llm, aichat, codex, opencode)
+    desc: Benchmark LLM commit message tools (claude, codex, opencode, pi)
     silent: true
     cmds:
       - |
@@ -365,17 +365,16 @@ tasks:
         # Documented commands from llm-commits.md
         declare -A COMMANDS
         COMMANDS["claude"]='MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='"'"''"'"' --safe-mode --setting-sources='"'"'user'"'"' --system-prompt='"'"''"'"''
-        COMMANDS["llm"]='llm -m claude-haiku-4.5'
-        COMMANDS["aichat"]='aichat -m claude:claude-haiku-5-5 --code'
         COMMANDS["codex"]='codex exec -m gpt-6-luna -c model_reasoning_effort='"'"'none'"'"' -c project_doc_max_bytes=0 -c skills.max_context_tokens=1 -c agents.enabled=false -c features.goals=false -c web_search=disabled -c '"'"'model_instructions_file="~/.codex/worktrunk-commit-instructions.txt"'"'"' -c features.shell_tool=false -c features.unified_exec=false -c features.apps=false -c features.plugins=false --ephemeral --sandbox=read-only --json - | jq -sr '"'"'[.[] | select(.item.type? == "agent_message")] | last.item.text'"'"''
         COMMANDS["opencode"]='opencode run -m anthropic/claude-haiku-5-5 --variant fast'
+        COMMANDS["pi"]='pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off'
 
         # Check which tools are available
         echo "=== LLM Commit Message Benchmark ==="
         echo ""
         echo "Checking available tools..."
         AVAILABLE=()
-        for tool in claude llm aichat codex opencode; do
+        for tool in claude codex opencode pi; do
           if command -v "$tool" &>/dev/null; then
             echo "  ✓ $tool"
             AVAILABLE+=("$tool")
@@ -411,10 +410,9 @@ tasks:
         if [ ${#AVAILABLE[@]} -eq 0 ]; then
           echo "No tools available. Install at least one:"
           echo "  claude: https://docs.anthropic.com/en/docs/claude-code"
-          echo "  llm: uv tool install llm llm-anthropic"
-          echo "  aichat: https://github.com/sigoden/aichat"
           echo "  codex: npm install -g @openai/codex"
           echo "  opencode: https://opencode.ai/download"
+          echo "  pi: https://pi.dev"
           exit 1
         fi
 

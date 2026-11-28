@@ -54,9 +54,7 @@ impl StageMode {
 pub struct CommitGenerationConfig {
     /// Shell command to invoke for generating commit messages
     ///
-    /// Examples:
-    /// - `"llm -m claude-haiku-4.5"`
-    /// - `"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku"`
+    /// Example: `"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku"`
     ///
     /// The command receives the prompt via stdin and should output the commit message.
     #[serde(default)]
@@ -545,7 +543,7 @@ impl Merge for StepConfig {
 /// worktree-path = ".worktrees/{{ branch | sanitize }}"
 ///
 /// [projects."github.com/user/repo".commit.generation]
-/// command = "llm -m gpt-4"
+/// command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 ///
 /// [projects."github.com/user/repo".list]
 /// full = true

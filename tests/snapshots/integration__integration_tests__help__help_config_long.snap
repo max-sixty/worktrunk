@@ -203,15 +203,10 @@ Create [2m~/.codex/worktrunk-commit-instructions.txt[0m containing just [2m.
 [107m [0m [2m[36m[commit.generation][0m
 [107m [0m [2mcommand = [0m[2m[32m"opencode run -m anthropic/claude-haiku-5-5 --variant fast"[0m
 
-[32mllm[0m
+[32mPi[0m
 
 [107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"llm -m claude-haiku-4.5"[0m
-
-[32maichat[0m
-
-[107m [0m [2m[36m[commit.generation][0m
-[107m [0m [2mcommand = [0m[2m[32m"aichat -m claude:claude-haiku-5-5 --code"[0m
+[107m [0m [2mcommand = [0m[2m[32m"pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"[0m
 
 See LLM commits docs for setup and Custom prompt templates for template customization.
 
