@@ -6,11 +6,14 @@ use crate::common::{
 use insta::Settings;
 use rstest::rstest;
 
+/// At least one suggestion, and every suggestion an option. Empty output is not
+/// "only options": a completer that returned nothing would pass `all` alone.
 fn only_option_suggestions(stdout: &str) -> bool {
-    stdout
+    let mut lines = stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .all(|line| line.starts_with('-'))
+        .peekable();
+    lines.peek().is_some() && lines.all(|line| line.starts_with('-'))
 }
 
 fn has_any_options(stdout: &str) -> bool {
@@ -1530,10 +1533,13 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
     other.create_branch("only-in-selected-repo");
     repo.create_branch("only-in-original-repo");
     let path = other.root_path().to_str().unwrap();
+    let trace = other.root_path().join(".git/wt/logs/trace.log");
     for args in [
         vec!["wt", "-C", path, "switch", ""],
         vec!["wt", "switch", "-C", path, ""],
     ] {
+        // Each form must write its own trace, not pass on the previous one's.
+        assert!(!trace.exists());
         let output = repo
             .completion_cmd(&args)
             .env("WORKTRUNK_VERBOSE", "2")
@@ -1543,8 +1549,9 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("only-in-selected-repo"), "{stdout}");
         assert!(!stdout.contains("only-in-original-repo"), "{stdout}");
-        assert!(other.root_path().join(".git/wt/logs/trace.log").exists());
+        assert!(trace.exists());
         assert!(!repo.root_path().join(".git/wt/logs/trace.log").exists());
+        std::fs::remove_file(&trace).unwrap();
     }
 }
 
