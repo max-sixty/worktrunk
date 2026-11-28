@@ -340,26 +340,33 @@ impl Repository {
             // to merge-tree. A dirty worktree probes an ephemeral commit but
             // stores the result under `branch_head+tree`.
             let cache_file = super::sha_cache::merge_conflicts_path(self, cache_a, cache_b);
-            // Stderr is buffered in `sh` until the conflict bit is stored: a
-            // merge driver inherits git's stderr, and once a caller that
-            // stopped waiting has exited, a write from the driver SIGPIPEs
-            // git before the bit is written (#4273, #4585). The buffer sits
-            // beside the entry rather than in `TMPDIR`, which a list must not
-            // depend on. It ends in `.json` so a shell that is killed leaves
-            // something the cache's sweep and clear both reclaim, and in the
-            // shell's pid so two probes of one pair never share it.
-            let script = r#"mkdir -p "$(dirname "$3")"
+            // Stderr stays in `sh` until the conflict bit is stored. A merge
+            // driver inherits git's stderr, and once a caller that stopped
+            // waiting has exited, a write there SIGPIPEs git before the bit
+            // lands (#4273, #4585). The buffer is unlinked before it is
+            // replayed, so that SIGPIPE cannot leave a `.stderr.*.json`
+            // behind. Creating it is best-effort: `:` aborts `sh` when the
+            // cache directory is not writable, and a missing bit must not
+            // fail the probe.
+            let script = r#"mkdir -p "$(dirname "$3")" 2>/dev/null
 err="$3.stderr.$$.json"
-: > "$err" || exit 125
-out=$(git merge-tree --write-tree "$1" "$2" 2>"$err")
+if true 2>/dev/null > "$err"; then
+  out=$(git merge-tree --write-tree "$1" "$2" 2>"$err")
+else
+  err=
+  out=$(git merge-tree --write-tree "$1" "$2")
+fi
 status=$?
 if [ "$status" -eq 0 ]; then
-  printf '%s' false > "$3"
+  printf '%s' false 2>/dev/null > "$3"
 elif [ "$status" -eq 1 ]; then
-  printf '%s' true > "$3"
+  printf '%s' true 2>/dev/null > "$3"
 fi
-cat "$err" >&2
-rm -f "$err"
+if [ -n "$err" ]; then
+  exec 4<"$err"
+  rm -f "$err"
+  cat <&4 >&2
+fi
 printf '%s\n' "$out"
 exit "$status"
 "#;
@@ -1665,14 +1672,23 @@ mod merge_tree_cache_tests {
         // The caller is gone, so the probe's stderr pipe has no reader.
         std::fs::write(&go, "").unwrap();
 
+        let cache_dir = bit_path.parent().unwrap().to_path_buf();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            if bit_path.exists() {
+            let leaked = std::fs::read_dir(&cache_dir).ok().is_some_and(|entries| {
+                entries.flatten().any(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.contains(".stderr."))
+                })
+            });
+            if bit_path.exists() && !leaked {
                 break;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "the abandoned probe never recorded its conflict bit"
+                "the abandoned probe never recorded its conflict bit without leaving a stderr buffer"
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
@@ -1680,6 +1696,50 @@ mod merge_tree_cache_tests {
         // reports a clean merge: the bit is `false`. What matters is that it
         // lands at all, after the caller that wanted it is gone.
         assert_eq!(std::fs::read_to_string(&bit_path).unwrap(), "false");
+    }
+
+    /// A cache directory the probe cannot write used to abort `sh` (`:` is a
+    /// special builtin, so a failed redirect exits the shell). The conflict
+    /// answer still has to come back; only the bit is best-effort.
+    #[cfg(unix)]
+    #[test]
+    fn merge_tree_probe_survives_an_unwritable_cache_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let test = TestRepo::with_initial_commit();
+        let root = test.root_path().to_path_buf();
+        std::fs::write(root.join("f.txt"), "a\nb\nc\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        std::fs::write(root.join("f.txt"), "a\nFEAT\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "feature"]);
+        test.run_git(&["checkout", "main"]);
+        std::fs::write(root.join("f.txt"), "a\nMAIN\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(&root).unwrap();
+        let bit_path =
+            super::super::sha_cache::merge_conflicts_path(&repo, &main_sha, &feature_sha);
+        let cache_dir = bit_path.parent().unwrap();
+        std::fs::create_dir_all(cache_dir).unwrap();
+        let mut readonly = std::fs::metadata(cache_dir).unwrap().permissions();
+        readonly.set_mode(0o555);
+        std::fs::set_permissions(cache_dir, readonly).unwrap();
+
+        let outcome = repo.merge_tree_outcome(&main_sha, &feature_sha);
+
+        let mut writable = std::fs::metadata(cache_dir).unwrap().permissions();
+        writable.set_mode(0o755);
+        std::fs::set_permissions(cache_dir, writable).unwrap();
+
+        assert!(
+            matches!(outcome.unwrap(), MergeTreeOutcome::Conflict),
+            "an unwritable cache directory must not fail the probe"
+        );
+        assert!(!bit_path.exists());
     }
 }
 
