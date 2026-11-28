@@ -25,6 +25,12 @@ here first:
 The default rule (open an issue here asking permission first) applies to every
 other target.
 
+## Winget manifest PRs
+
+`publish-winget` in `.github/workflows/release.yaml` opens each release's manifest PR on `microsoft/winget-pkgs` from a branch of the `max-sixty/winget-pkgs` fork, which the bot can push to. When one of those PRs fails validation (a `*-Error` or `Needs-Author-Feedback` label), fix the manifest on its fork branch and push without asking here first, then leave a short comment on the PR saying what changed. Keep to the failing manifest. The manifests use CRLF line endings, so preserve them in the edit.
+
+`winget-releaser` (komac) fills each locale field from this repo where it can and otherwise copies the newest merged manifest's value. It derives `LicenseUrl` only from a root file whose name without extension is `license`, which `LICENSE-MIT` and `LICENSE-APACHE` are not, so that URL is copied forward. A bad copied value repeats every release until a corrected manifest merges upstream. When the cause is in this repo, fix it here too.
+
 ## Codecov Monitoring
 
 After required CI checks pass, poll `codecov/patch` — it is mandatory despite
