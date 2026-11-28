@@ -101,6 +101,29 @@ fn test_claude_hook_marker_failure_succeeds(repo: TestRepo) {
     assert_eq!(stdout(&output), "");
 }
 
+/// The marker events run as async hooks, so writes from sessions in other
+/// worktrees can overlap and hold `config.lock`. A write that finds the lock
+/// held waits for it rather than dropping the marker. Git 2.56 waits for the
+/// lock itself; turning that off exercises wt's wait, which older Gits rely on.
+#[rstest]
+fn test_claude_hook_marker_waits_for_config_lock(repo: TestRepo) {
+    let root = repo.root_path();
+    repo.run_git(&["config", "core.configLockTimeout", "0"]);
+    let lock = root.join(".git/config.lock");
+    std::fs::write(&lock, "").unwrap();
+    let release = {
+        let lock = lock.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::fs::remove_file(&lock).unwrap();
+        })
+    };
+    let output = run_hook(&repo, root, root, r#"{"hook_event_name":"Stop"}"#);
+    release.join().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(marker(&repo, root), "💬");
+}
+
 /// A detached worktree has no branch to attach a marker to.
 #[rstest]
 fn test_claude_hook_marker_detached_worktree(repo: TestRepo) {

@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true",
+            "async": true
           }
         ]
       }
@@ -17,7 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true",
+            "async": true
           }
         ]
       }
@@ -28,7 +30,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true",
+            "async": true
           }
         ]
       }
@@ -49,7 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true"
+            "command": "bash \"$CLAUDE_PLUGIN_ROOT/hooks/wt.sh\" config plugins claude hook || true",
+            "async": true
           }
         ]
       }

@@ -21,6 +21,6 @@ Repo-root skills/ is the authored set. plugins/worktrunk/skills/ is a generated,
 
 ## Activity markers
 
-Claude hooks mark working on UserPromptSubmit, waiting on Notification, AskUserQuestion, PermissionRequest, and Stop, and clear on SessionEnd. A user interrupt has no hook, so the working marker can persist. Claude resolves markers from CLAUDE_PROJECT_DIR, which also leaves EnterWorktree sessions marked on their launch worktree.
+Claude hooks mark working on UserPromptSubmit, waiting on Notification, AskUserQuestion, PermissionRequest, and Stop, and clear on SessionEnd. The marker-only events run as async hooks so Claude Code does not wait on the write; PermissionRequest stays synchronous because its output approves EnterWorktree, which Claude Code ignores from an async hook. Async writes are unordered, and a write that finds config.lock held retries for up to a second. A user interrupt has no hook, so the working marker can persist. Claude resolves markers from CLAUDE_PROJECT_DIR, which also leaves EnterWorktree sessions marked on their launch worktree.
 
 Codex hooks mark working on UserPromptSubmit, waiting on PermissionRequest and Stop, and clear on SessionEnd. Codex and Gemini currently resolve the worktree from the hook process directory. When a harness exposes a stable session project directory, pass it with Worktrunk's global -C.
