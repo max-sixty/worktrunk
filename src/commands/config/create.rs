@@ -6,9 +6,11 @@ use anyhow::Context;
 use color_print::cformat;
 use std::path::PathBuf;
 use worktrunk::config::{ConfigFileKind, require_config_path};
-use worktrunk::git::Repository;
+use worktrunk::git::{Repository, WorktrunkError};
 use worktrunk::path::format_path_for_display;
-use worktrunk::styling::{eprintln, hint_message, info_message, success_message};
+use worktrunk::styling::{
+    eprintln, error_message, hint_message, info_message, success_message, suggest_command,
+};
 
 /// Example user configuration file content (displayed in help with values uncommented)
 const USER_CONFIG_EXAMPLE: &str = include_str!("../../../dev/config.example.toml");
@@ -43,16 +45,52 @@ pub(super) fn comment_out_config(content: &str) -> String {
 pub fn handle_config_create(project: bool) -> anyhow::Result<()> {
     if project {
         let repo = Repository::current()?;
-        let config_path = repo.project_config_path()?.ok_or_else(|| {
-            if repo.is_bare().unwrap_or(false) {
-                anyhow::anyhow!(
-                    "Bare repository has no linked worktrees yet.\n\
-                     Run `wt switch <branch>` to create a worktree first, then run `wt config create --project` from inside it."
-                )
-            } else {
-                anyhow::anyhow!("Cannot determine project config location — no worktree found")
+        let Some(config_path) = repo.project_config_path()? else {
+            // An empty override disables project config before any worktree
+            // is consulted, so no worktree state explains the `None`.
+            if std::env::var_os("WORKTRUNK_PROJECT_CONFIG_PATH").is_some_and(|p| p.is_empty()) {
+                eprintln!(
+                    "{}",
+                    error_message(cformat!(
+                        "Cannot create project config — <bold>WORKTRUNK_PROJECT_CONFIG_PATH</> is empty, which disables project config"
+                    ))
+                );
+                eprintln!(
+                    "{}",
+                    hint_message(cformat!(
+                        "Unset <underline>WORKTRUNK_PROJECT_CONFIG_PATH</> or set it to a file path"
+                    ))
+                );
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
             }
-        })?;
+            if repo.is_bare().unwrap_or(false) {
+                // At a bare root the project config path is the default
+                // branch's worktree, so a worktree on another branch doesn't
+                // supply one; running from inside that worktree does.
+                let (error, hint) = match repo.default_branch() {
+                    Some(branch) => {
+                        let switch = suggest_command("switch", &[&branch], &[]);
+                        (
+                            cformat!(
+                                "Cannot create project config — no worktree holds the default branch <bold>{branch}</>"
+                            ),
+                            cformat!(
+                                "Run from inside a worktree, or to create the default branch's worktree, run <underline>{switch}</>"
+                            ),
+                        )
+                    }
+                    None => (
+                        "Cannot create project config — could not determine the default branch"
+                            .to_string(),
+                        "Run from inside a worktree".to_string(),
+                    ),
+                };
+                eprintln!("{}", error_message(error));
+                eprintln!("{}", hint_message(hint));
+                return Err(WorktrunkError::AlreadyDisplayed { exit_code: 1 }.into());
+            }
+            anyhow::bail!("Cannot determine project config location — no worktree found");
+        };
         let user_config_exists = require_config_path().map(|p| p.exists()).unwrap_or(false);
         create_config_file(
             config_path,

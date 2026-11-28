@@ -49,7 +49,10 @@ jobs:
         save-if: false
 
     - name: Install shells and jq
-      run: sudo apt-get update && sudo apt-get install -y zsh fish jq
+      # Bounded like .github/actions/tend-setup's copy.
+      run: |
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y zsh fish jq
 
     - name: Install nushell
       uses: hustcer/setup-nu@v3

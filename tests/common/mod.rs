@@ -31,6 +31,17 @@ use worktrunk::path::to_posix_path;
 #[cfg(unix)]
 pub const FOREGROUND_TRACE_FILTER: &str = "worktrunk::wt_trace=debug,worktrunk::trace::emit=debug";
 
+/// Foreground wait whose INT trap runs under macOS `/bin/sh` (bash 3.2).
+///
+/// `while :; do sleep 0.1; done` can drop one SIGINT: the signal arrives after
+/// bash has forked the next `sleep` and before `wait_for` runs the trap
+/// (#4748). Waiting on a background `sleep` makes SIGINT interrupt the `wait`
+/// builtin, which runs the trap. One keypress still stops the child.
+#[cfg(unix)]
+pub fn sigint_observable_wait(interval: &str) -> String {
+    format!("while :; do sleep {interval} & wait $!; done")
+}
+
 /// Child readiness may precede the parent's spawn return. Caught-signal tests
 /// wait for wt to commit admission before delivering ordinary terminal input.
 #[cfg(unix)]

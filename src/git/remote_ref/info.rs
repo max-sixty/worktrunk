@@ -118,17 +118,11 @@ impl RemoteRefInfo {
                 PlatformData::Gitea { head_owner, .. } => {
                     format!("{}:{}", head_owner, self.source_branch)
                 }
-                PlatformData::GitLab { .. } => {
-                    // For GitLab, try to extract namespace from fork_push_url
-                    if let Some(url) = &self.fork_push_url
-                        && let Some(namespace) = extract_namespace_from_url(url)
-                    {
-                        return format!("{}:{}", namespace, self.source_branch);
-                    }
-                    self.source_branch.clone()
-                }
-                PlatformData::AzureDevOps { .. } => {
-                    // Azure DevOps fork PRs are uncommon; just show branch name
+                // GitLab's fork namespace needs a project lookup that `wt switch`
+                // defers until it has to create a branch, after this context line
+                // prints. Azure DevOps fork PRs are uncommon. Both show the bare
+                // branch.
+                PlatformData::GitLab { .. } | PlatformData::AzureDevOps { .. } => {
                     self.source_branch.clone()
                 }
             }
@@ -158,41 +152,6 @@ impl RemoteRefInfo {
                 .map(|url| format!("{}/{}", url.repo(), self.source_branch)),
         }
     }
-}
-
-/// Extract namespace (owner or group/subgroup) from a git URL.
-///
-/// Handles both SSH (`git@host:namespace/repo.git`) and HTTPS
-/// (`https://host/namespace/repo.git`) formats. Supports GitLab nested
-/// namespaces like `group/subgroup/repo.git` → `group/subgroup`.
-fn extract_namespace_from_url(url: &str) -> Option<String> {
-    // SSH format: git@host:namespace/repo.git
-    if let Some(path) = url.strip_prefix("git@").and_then(|s| s.split(':').nth(1)) {
-        return extract_namespace_from_path(path);
-    }
-    // HTTPS format: https://host/namespace/repo.git
-    if let Some(rest) = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))
-    {
-        // Skip the host segment
-        let path = rest.split('/').skip(1).collect::<Vec<_>>().join("/");
-        return extract_namespace_from_path(&path);
-    }
-    None
-}
-
-/// Extract namespace from a path like `group/subgroup/repo.git`.
-///
-/// Returns everything except the last segment (repo name).
-fn extract_namespace_from_path(path: &str) -> Option<String> {
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let segments: Vec<_> = path.split('/').collect();
-    if segments.len() < 2 {
-        return None;
-    }
-    // All segments except the last (which is the repo name)
-    Some(segments[..segments.len() - 1].join("/"))
 }
 
 #[cfg(test)]
@@ -271,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn test_source_ref_fork_gitlab() {
+    fn test_source_ref_fork_gitlab_shows_bare_branch() {
         let info = RemoteRefInfo {
             number: 101,
             title: "Fix bug".to_string(),
@@ -291,7 +250,7 @@ mod tests {
             },
         };
         assert_eq!(info.ref_type(), RefType::Mr);
-        assert_eq!(info.source_ref(), "contributor:feature-fix");
+        assert_eq!(info.source_ref(), "feature-fix");
     }
 
     #[test]
@@ -379,48 +338,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_namespace_from_url_ssh() {
-        assert_eq!(
-            extract_namespace_from_url("git@gitlab.com:owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            extract_namespace_from_url("git@github.com:contributor/repo.git"),
-            Some("contributor".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_namespace_from_url_https() {
-        assert_eq!(
-            extract_namespace_from_url("https://gitlab.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-        assert_eq!(
-            extract_namespace_from_url("http://github.com/owner/repo.git"),
-            Some("owner".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_namespace_from_url_nested() {
-        // GitLab nested namespaces
-        assert_eq!(
-            extract_namespace_from_url("git@gitlab.com:group/subgroup/repo.git"),
-            Some("group/subgroup".to_string())
-        );
-        assert_eq!(
-            extract_namespace_from_url("https://gitlab.com/group/subgroup/repo.git"),
-            Some("group/subgroup".to_string())
-        );
-        // Even deeper nesting
-        assert_eq!(
-            extract_namespace_from_url("git@gitlab.com:org/team/project/repo.git"),
-            Some("org/team/project".to_string())
-        );
-    }
-
-    #[test]
     fn test_source_ref_azure_same_repo() {
         let info = RemoteRefInfo {
             number: 550,
@@ -465,13 +382,5 @@ mod tests {
             info.prefixed_local_branch_name(),
             Some("myrepo-fork/main".to_string())
         );
-    }
-
-    #[test]
-    fn test_extract_namespace_from_url_invalid() {
-        assert_eq!(extract_namespace_from_url("invalid-url"), None);
-        assert_eq!(extract_namespace_from_url(""), None);
-        // Just a repo name, no namespace
-        assert_eq!(extract_namespace_from_url("git@gitlab.com:repo.git"), None);
     }
 }

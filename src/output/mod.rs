@@ -15,8 +15,8 @@
 //! use worktrunk::styling::{success_message, error_message, hint_message, eprintln};
 //!
 //! eprintln!("{}", success_message("Operation complete"));
-//! output::change_directory(&path);
-//! output::execute(vec!["git".into(), "pull".into()], &path);
+//! output::change_directory(&path)?;
+//! output::execute(vec!["git".into(), "pull".into()], &path, false)?;
 //! ```
 //!
 //! ## Shell Integration

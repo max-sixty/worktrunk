@@ -16,7 +16,7 @@ lets `wt remove` delete a branch. Deletions include:
 - `git reset --hard`, `git checkout -f`, `git clean` with `-f` / `-d` / `-x`
 - `rm -rf`, `std::fs::remove_dir_all`, `std::fs::remove_file`
 - shipped automation that runs the above: `plugins/*/hooks/hooks.json`,
-  `hooks/hooks.json`, `hooks/wt.sh`, and skill or alias examples users copy
+  `hooks/hooks.json`, `plugins/*/hooks/wt.sh`, and skill or alias examples users copy
 
 The hold is for what a user can't get back: a worktree, a repository, a branch,
 uncommitted work, or a file worktrunk writes on their behalf (its own config and

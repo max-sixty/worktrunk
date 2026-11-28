@@ -158,9 +158,12 @@ const FSMONITOR_LSOF_TIMEOUT: Duration = Duration::from_secs(2);
 /// only ever reach that worktree's own daemon, never another worktree's.
 pub fn stop_fsmonitor_daemon(worktree: &WorkingTree) {
     // Graceful path first: a healthy daemon exits cleanly on this IPC request.
+    // `worktree` is a `wt`-chosen worktree, so an inherited `GIT_DIR` would
+    // address the invoking worktree's daemon instead.
     let _ = Cmd::new("git")
         .args(["fsmonitor--daemon", "stop"])
         .current_dir(worktree.path())
+        .scrub_git_discovery_env()
         .context(crate::git::repository::path_to_logging_context(
             worktree.path(),
         ))

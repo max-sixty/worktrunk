@@ -397,6 +397,71 @@ fn test_list_long_commit_message(mut repo: TestRepo) {
     assert_cmd_snapshot!(list_snapshots::command(&repo, repo.root_path()));
 }
 
+#[test]
+fn test_list_rotates_status_explanations() {
+    let repo = TestRepo::with_initial_commit();
+    std::fs::write(repo.root_path().join("untracked"), "content\n").unwrap();
+    repo.write_test_config("[list]\ncolumns = [\"branch\", \"status\"]\n");
+    let cache = repo
+        .root_path()
+        .join(".git/wt/cache/status-explanations/shown.json");
+    let run = |args: &[&str], columns: &str| {
+        let output = repo
+            .wt_command()
+            .args(args)
+            .env("COLUMNS", columns)
+            .env("NO_COLOR", "1")
+            .env_remove("CLICOLOR_FORCE")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        output
+    };
+    let footer = |width: &str| {
+        let stderr = String::from_utf8(run(&["list"], width).stderr).unwrap();
+        let (_, footer) = stderr.split_once("○ Showing").unwrap();
+        footer.trim_end().to_owned()
+    };
+
+    let summary = " 1 worktree, 1 with changes";
+    let first = format!("{summary}  (? untracked files)");
+    let second = format!("{summary}  (^ main worktree)");
+    assert_eq!(footer("58"), first);
+    let cache_after_first = std::fs::read(&cache).unwrap();
+    assert_eq!(footer("36"), summary);
+    let wrapped = footer("30");
+    assert!(wrapped.contains('\n'), "{wrapped:?}");
+    assert!(!wrapped.contains('('), "{wrapped:?}");
+    run(&["list", "--format=json"], "58");
+    run(&["list", "statusline"], "58");
+    assert_eq!(std::fs::read(&cache).unwrap(), cache_after_first);
+    assert_eq!(footer("58"), second);
+    assert_eq!(footer("58"), first);
+
+    for args in [
+        &["config", "state", "get", "--format=json"][..],
+        &["config", "state", "cache", "get", "--format=json"][..],
+    ] {
+        let state: serde_json::Value = serde_json::from_slice(&run(args, "58").stdout).unwrap();
+        assert_eq!(
+            state["status_explanations"],
+            serde_json::json!(["? untracked files"])
+        );
+    }
+    let state = run(&["config", "state", "cache", "get"], "58");
+    assert!(String::from_utf8_lossy(&state.stdout).contains("1 explanation shown"));
+    run(&["config", "state", "cache", "clear"], "58");
+    assert!(!cache.exists());
+    assert_eq!(footer("58"), first);
+
+    std::fs::write(&cache, b"{truncated").unwrap();
+    assert_eq!(footer("58"), first);
+    std::fs::remove_file(&cache).unwrap();
+    std::fs::create_dir(&cache).unwrap();
+    assert_eq!(footer("58"), first);
+    assert!(cache.is_dir());
+}
+
 #[rstest]
 fn test_list_escapes_commit_controls(repo: TestRepo) {
     let subject = "hello\x1b]52;c;YQ==\x07 café";

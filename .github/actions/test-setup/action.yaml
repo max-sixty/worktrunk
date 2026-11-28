@@ -58,7 +58,12 @@ runs:
     - name: Install shells (zsh, fish) - Ubuntu
       if: runner.os == 'Linux'
       shell: bash
-      run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # Bounded like tend-setup's copy, which explains the flags: a wedged
+      # mirror otherwise holds the job, and every session polling the PR, to
+      # GitHub's 360-minute cap.
+      run: |
+        sudo timeout -k 30 300 apt-get update
+        sudo timeout -k 30 300 apt-get install -y zsh fish
 
     - name: Install shells (fish) - macOS
       if: runner.os == 'macOS'

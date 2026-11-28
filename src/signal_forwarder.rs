@@ -624,7 +624,9 @@ mod tests {
         command
             .args([
                 "-c",
-                "trap 'echo child-handled >&2; exit 0' INT; echo ready > \"$1\"; while :; do sleep 0.01; done",
+                // Background sleep: macOS bash 3.2 can drop one SIGINT across the
+                // fork of a foreground `sleep` (#4748). `wait` runs the trap.
+                "trap 'echo child-handled >&2; exit 0' INT; echo ready > \"$1\"; while :; do sleep 0.01 & wait $!; done",
                 "sh",
             ])
             .arg(&marker);

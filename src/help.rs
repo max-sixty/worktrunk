@@ -11,7 +11,7 @@
 //! portable Markdown:
 //!
 //! ```text
-//! cli.rs (source of truth)
+//! src/cli/mod.rs (source of truth)
 //!   ├── after_long_help: markdown prose with [experimental] markers, `#` CI samples, plain URLs
 //!   └── doc comments (/// lines): definition + subtitle for lead paragraph
 //!         │
@@ -199,7 +199,7 @@ pub fn maybe_handle_help_with_pager(
     // --help uses pager, -h prints directly (git convention)
     let use_pager = args.iter().any(|a| a == "--help");
 
-    // Check for --help-page flag (output full doc page with frontmatter)
+    // Check for --help-page flag (output a full doc page)
     if args.iter().any(|a| a == "--help-page") {
         let mode = if args.iter().any(|a| a == "--plain") {
             PageMode::Plain
@@ -277,7 +277,8 @@ pub fn maybe_handle_help_with_pager(
                 };
 
                 // Render markdown sections (tables, code blocks, prose) with proper wrapping.
-                // Since we disabled clap's wrapping above, our renderer controls all line breaks.
+                // Clap's own wrapping is off (`term_width = 0` on `Cli`), so our
+                // renderer controls all line breaks.
                 let help = crate::md_help::render_markdown_in_help_with_width(
                     &clap_output,
                     worktrunk::styling::terminal_width(),
@@ -472,16 +473,12 @@ Commands with schemas: list"
 
 /// Generate a full documentation page for a command.
 ///
-/// Output format:
+/// Output format (web mode; plain mode replaces the marker comment with a
+/// `# wt <command>` heading, uses a bare fence, and omits the end marker):
 /// ```markdown
-/// +++
-/// title = "Merging"
-/// weight = 5
-/// +++
+/// <!-- ⚠️ AUTO-GENERATED from `wt merge --help-page` — edit src/cli/mod.rs to update -->
 ///
 /// [after_long_help content - the conceptual docs]
-///
-/// ---
 ///
 /// ## Command reference
 ///
@@ -489,6 +486,8 @@ Commands with schemas: list"
 /// wt merge — ...
 /// Usage: ...
 /// ```
+///
+/// <!-- END AUTO-GENERATED -->
 /// ```
 ///
 /// This is used to generate docs/src/content/docs/merge.md etc from the source.
@@ -504,7 +503,7 @@ fn handle_help_page(subcommand: Option<&str>, mode: PageMode) {
     let Some(subcommand) = subcommand else {
         eprintln!(
             "Usage: wt <command> --help-page
-Commands with pages: merge, switch, remove, list"
+Commands with pages: switch, list, merge, remove, step, hook, config"
         );
         return;
     };
