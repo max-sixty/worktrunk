@@ -687,24 +687,7 @@ impl Repository {
             return Ok(LineDiff::default());
         };
 
-        // Sparse paths are root-relative, but git resolves pathspecs against
-        // the cwd, which is the user's subdirectory when run from one.
-        let sparse_pathspecs: Vec<String> = sparse_paths
-            .iter()
-            .map(|path| format!(":(top){path}"))
-            .collect();
-        let mut args = PlumbingDiff::Tree.args(&[
-            "-r",
-            "--shortstat",
-            "--find-renames",
-            &merge_base,
-            head_sha,
-            "--",
-        ]);
-        args.extend(sparse_pathspecs.iter().map(String::as_str));
-
-        let stdout = self.run_command(&args)?;
-        let result = LineDiff::from_shortstat(&stdout);
+        let result = self.tree_shortstat(&merge_base, head_sha, sparse_paths)?;
         if use_cache {
             super::sha_cache::put_diff_stats(self, base_sha, head_sha, result);
         }
@@ -782,21 +765,26 @@ impl Repository {
         };
 
         let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
+        self.tree_shortstat(target_sha, &merged_tree, sparse_paths)
+    }
 
+    /// `git diff-tree --shortstat` line counts from tree-ish `from` to `to`,
+    /// limited to `sparse_paths` when a sparse checkout is active. Shared by
+    /// both `^…±` measures so they count lines the same way.
+    fn tree_shortstat(
+        &self,
+        from: &str,
+        to: &str,
+        sparse_paths: &[String],
+    ) -> anyhow::Result<LineDiff> {
         // Sparse paths are root-relative, but git resolves pathspecs against
         // the cwd, which is the user's subdirectory when run from one.
         let sparse_pathspecs: Vec<String> = sparse_paths
             .iter()
             .map(|path| format!(":(top){path}"))
             .collect();
-        let mut args = PlumbingDiff::Tree.args(&[
-            "-r",
-            "--shortstat",
-            "--find-renames",
-            target_sha,
-            &merged_tree,
-            "--",
-        ]);
+        let mut args =
+            PlumbingDiff::Tree.args(&["-r", "--shortstat", "--find-renames", from, to, "--"]);
         args.extend(sparse_pathspecs.iter().map(String::as_str));
 
         let stdout = self.run_command(&args)?;
