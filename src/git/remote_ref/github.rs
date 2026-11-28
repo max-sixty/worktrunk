@@ -242,7 +242,7 @@ fn use_ssh_protocol(host: &str) -> bool {
 /// `github.com` is the no-flag default once more than one host is logged in,
 /// so naming it would only repeat that path. No login reads as `None` and the
 /// caller tries the next candidate.
-fn authed_enterprise_host(host: Option<&str>) -> Option<String> {
+pub fn authed_enterprise_host(host: Option<&str>) -> Option<String> {
     let host = host?;
     if host.eq_ignore_ascii_case("github.com") || !is_authed_for(host) {
         None

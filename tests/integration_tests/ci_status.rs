@@ -965,6 +965,69 @@ fn test_list_full_with_branch_fallback_using_fork_pushremote(mut repo: TestRepo)
     );
 }
 
+/// A GitHub Enterprise remote with no `forge.hostname`: `gh pr list` takes its
+/// host from the remote, but `gh api` asks gh's default host unless told
+/// otherwise, so a branch with no PR must look up its commit's check runs with
+/// `--hostname <remote host>` when gh holds a login there. Without a login (an
+/// SSH alias such as `github-personal`, #1790) gh's default host stays.
+#[rstest]
+#[case::authed_host(true)]
+#[case::unauthed_host(false)]
+fn test_list_full_commit_checks_pass_enterprise_hostname(
+    mut repo: TestRepo,
+    #[case] gh_authed: bool,
+) {
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "origin",
+        "https://github.example.com/test-owner/test-repo.git",
+    ]);
+    repo.add_worktree("feature");
+    setup_tracking_for_all_branches(&repo, "origin");
+    let head_sha = branch_sha(&repo, "feature");
+
+    let mock_bin = setup_mock_gh_with_api_data(
+        &repo,
+        "[]",
+        &[(
+            &format!("api repos/test-owner/test-repo/commits/{head_sha}/check-runs"),
+            "[]",
+        )],
+    );
+    if !gh_authed {
+        MockConfig::new("gh")
+            .version("gh version 2.0.0 (mock)")
+            .command("pr list", MockResponse::output("[]"))
+            .command("api", MockResponse::output("[]"))
+            .command("_default", MockResponse::exit(1))
+            .write(&mock_bin);
+    }
+
+    let call_log = worktrunk::testing::tempdir().unwrap();
+    let mut cmd = make_snapshot_cmd(&repo, "list", &["--full"], None);
+    configure_mock_ci_env(&mut cmd, &mock_bin);
+    cmd.env("WORKTRUNK_TEST_MOCK_CALL_LOG_DIR", call_log.path());
+    let output = cmd.output().unwrap();
+    assert!(
+        output.status.success(),
+        "wt list --full should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let calls = mock_calls(call_log.path(), "gh");
+    let check_runs = format!("api repos/test-owner/test-repo/commits/{head_sha}/check-runs");
+    let call = calls
+        .iter()
+        .find(|call| call.starts_with(&check_runs))
+        .unwrap_or_else(|| panic!("feature's check runs are looked up. calls: {calls:#?}"));
+    assert_eq!(
+        call.contains("--hostname github.example.com"),
+        gh_authed,
+        "check-runs call: {call}"
+    );
+}
+
 /// A branch whose head is on no remote gets no lookup by commit SHA: the
 /// forge has no such commit and answers with an error, which would otherwise
 /// show the error indicator on ordinary unpushed work. A pushed branch against

@@ -3,11 +3,12 @@
 //! Detects CI status from GitHub PRs and workflow runs using the `gh` CLI.
 
 use serde::Deserialize;
-use worktrunk::git::Repository;
+use worktrunk::git::remote_ref::github;
+use worktrunk::git::{GitRemoteUrl, Repository, parse_owner_repo};
 
 use super::{
     CiBranchName, CiSource, CiStatus, MAX_PRS_TO_FETCH, PrRef, PrStatus, ReviewState,
-    branch_owner_repo, non_interactive_cmd, parse_json,
+    branch_owner_repo, branch_remote_url, non_interactive_cmd, parse_json,
 };
 // CI detection primes the picker's on-disk comments cache: this `gh pr list`
 // call already transfers the comment thread (we count it for `comment_count`),
@@ -214,10 +215,18 @@ pub(super) fn detect_github_commit_checks(
         return None;
     }
     let repo_root = repo.current_worktree().root().ok()?;
-    let (owner, repo_name) = branch_owner_repo(repo, branch)?;
+    let remote_url = branch_remote_url(repo, branch)?;
+    let (owner, repo_name) = parse_owner_repo(&remote_url)?;
 
-    // Only pass --hostname when explicitly configured (for GHE / self-hosted)
-    let hostname = repo.forge_hostname();
+    // `gh api` doesn't infer the host from the repository, so without
+    // `--hostname` it asks gh's default host — github.com once several hosts
+    // are logged in. A configured `forge.hostname` wins; otherwise a GitHub
+    // Enterprise remote's host, when gh holds a login there. An SSH alias
+    // (`git@github-personal:…`) has no login, so it keeps gh's default (#1790).
+    let hostname = repo.forge_hostname().or_else(|| {
+        let host = GitRemoteUrl::parse(&remote_url)?.host().to_string();
+        github::authed_enterprise_host(Some(&host))
+    });
 
     // Use GitHub's check-runs API to get all checks for this commit
     let api_path = format!("repos/{owner}/{repo_name}/commits/{local_head}/check-runs");
