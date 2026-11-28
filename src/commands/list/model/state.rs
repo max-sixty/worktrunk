@@ -222,7 +222,7 @@ impl MainState {
     pub(super) fn label(self) -> Option<&'static str> {
         match self {
             Self::None => None,
-            Self::IsMain => Some("main worktree"),
+            Self::IsMain => Some("primary worktree"),
             Self::WouldConflict => Some("would conflict"),
             Self::Empty => Some("clean at default commit"),
             Self::SameCommit => Some("dirty at default commit"),

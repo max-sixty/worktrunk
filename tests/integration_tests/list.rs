@@ -425,7 +425,7 @@ fn test_list_rotates_status_explanations() {
 
     let summary = " 1 worktree, 1 with changes";
     let first = format!("{summary}  (? untracked files)");
-    let second = format!("{summary}  (^ main worktree)");
+    let second = format!("{summary}  (^ primary worktree)");
     assert_eq!(footer("58"), first);
     let cache_after_first = std::fs::read(&cache).unwrap();
     assert_eq!(footer("36"), summary);
