@@ -67,4 +67,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead  (↕ diverged from default  ⊂ already integrated  ^ main worktree  ⇡ ahead of remote)[0m

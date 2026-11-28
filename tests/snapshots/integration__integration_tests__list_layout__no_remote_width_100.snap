@@ -67,4 +67,4 @@ exit_code: 0
 
 ----- stderr -----
 
-[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Remote⇅, Path[0m
+[2m○[22m [2mShowing 5 worktrees, 3 ahead, hidden: Remote⇅, Path  (^ main worktree  ↑ ahead of default)[0m

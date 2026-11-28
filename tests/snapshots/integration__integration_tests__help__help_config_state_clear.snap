@@ -76,7 +76,7 @@ Clears all stored state:
 - Previous branch
 - All branch markers
 - All variables
-- All caches (CI status, summaries, git commands)
+- All caches (CI status, summaries, git commands, status explanations)
 - All hints
 - All log files
 - Stale trash from worktree removal ([2m.git/wt/trash/[0m)
@@ -85,7 +85,7 @@ Prompts for confirmation before clearing, since this removes hand-authored
 markers and vars. Pass [2m--yes[0m to skip the prompt.
 
 To drop only the regenerable caches (CI status, summaries, git commands,
-hints, previous branch), run [2mwt config state cache clear[0m — it needs no
+status explanations, hints, previous branch), run [2mwt config state cache clear[0m — it needs no
 confirmation and leaves markers, vars, and the default-branch override
 untouched.
 

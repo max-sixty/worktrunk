@@ -85,6 +85,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 - [1mCI status[0m — forge CI per branch (30–60s TTL), shown in [2mwt list[0m
 - [1mSummaries[0m — LLM-generated branch summaries ([2mwt list --full[0m, [2mwt switch[0m preview)
 - [1mGit commands[0m — cached merge-tree, ancestry, diff-stat, and [2mwt switch[0m preview results
+- [1mStatus explanations[0m — explanations shown in the current [2mwt list[0m footer rotation
 - [1mHints[0m — one-time hints already shown in this repo
 - [1mPrevious branch[0m — the [2mwt switch -[0m target, re-recorded on the next switch
 
