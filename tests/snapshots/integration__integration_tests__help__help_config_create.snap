@@ -269,7 +269,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
+[107m [0m [2m# verify = true      # Run hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Remove[0m

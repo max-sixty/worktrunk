@@ -325,7 +325,7 @@ pub struct MergeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remove: Option<bool>,
 
-    /// Run project hooks (default: true)
+    /// Run user and project hooks (default: true)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<bool>,
 
@@ -355,7 +355,7 @@ impl MergeConfig {
         self.remove.unwrap_or(true)
     }
 
-    /// Run project hooks (default: true)
+    /// Run user and project hooks (default: true)
     pub fn verify(&self) -> bool {
         self.verify.unwrap_or(true)
     }
