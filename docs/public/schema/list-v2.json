@@ -220,7 +220,7 @@
               "type": "null"
             }
           ],
-          "description": "Lines added/deleted vs the default branch; null while unresolved."
+          "description": "Lines merging into the default branch would add/delete; null while unresolved."
         },
         "integration": {
           "$ref": "#/$defs/Nullable_JsonIntegration",

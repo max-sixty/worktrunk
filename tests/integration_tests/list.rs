@@ -4776,6 +4776,71 @@ fn test_list_integrated_when_squash_merged_on_remote_with_local_diverged(
     );
 }
 
+/// `^…±` measures what merging would add, so a squash-merged branch reports
+/// no changes — agreeing with the `⊂` beside it — even after the default
+/// branch moves on. The three-dot diff from the merge-base (which a squash
+/// merge doesn't move) would report the branch's full `+2`. A branch that
+/// hasn't been merged still reports its own additions. (#3842)
+#[rstest]
+fn test_list_branch_diff_is_empty_for_squash_merged_branch(repo: TestRepo) {
+    repo.write_test_config("[list]\njson-schema = 1\n");
+
+    std::fs::write(repo.root_path().join("f.txt"), "a\nb\nc\n").unwrap();
+    std::fs::write(repo.root_path().join("other.txt"), "x\n").unwrap();
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "base"]);
+
+    repo.run_git(&["checkout", "-b", "squashed"]);
+    std::fs::write(repo.root_path().join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "squashed adds lines"]);
+    repo.run_git(&["checkout", "main"]);
+    repo.run_git(&["merge", "--squash", "squashed"]);
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "Squash merge squashed"]);
+    // Unrelated main work, so the trees no longer match exactly and the
+    // integration probe has to go through merge-tree.
+    std::fs::write(repo.root_path().join("other.txt"), "x\ny\n").unwrap();
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "unrelated main work"]);
+
+    repo.run_git(&["checkout", "-b", "unmerged"]);
+    std::fs::write(repo.root_path().join("new.txt"), "1\n2\n3\n").unwrap();
+    repo.run_git(&["add", "-A"]);
+    repo.run_git(&["commit", "-m", "unmerged adds a file"]);
+    repo.run_git(&["checkout", "main"]);
+
+    let output = repo
+        .wt_command()
+        .args(["list", "--branches", "--format=json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "wt list should succeed");
+    let json: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let row = |name: &str| {
+        json.iter()
+            .find(|w| w["branch"] == name)
+            .unwrap_or_else(|| panic!("{name} row should be present"))
+            .clone()
+    };
+
+    let squashed = row("squashed");
+    assert_eq!(squashed["main_state"], "integrated", "entry: {squashed}");
+    assert_eq!(squashed["main"]["ahead"], 1, "entry: {squashed}");
+    assert_eq!(
+        squashed["main"]["diff"],
+        serde_json::json!({"added": 0, "deleted": 0}),
+        "a squash-merged branch would add nothing: {squashed}"
+    );
+
+    let unmerged = row("unmerged");
+    assert_eq!(
+        unmerged["main"]["diff"],
+        serde_json::json!({"added": 3, "deleted": 0}),
+        "entry: {unmerged}"
+    );
+}
+
 /// Regression: `wt list` against a worktree whose `<gitdir>/index` file is
 /// absent must not surface `working-tree-conflicts (Failed to copy index
 /// file)`. A missing index is semantically empty (nothing staged), so the

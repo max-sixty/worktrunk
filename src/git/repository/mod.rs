@@ -347,6 +347,10 @@ pub(super) struct RepoCache {
     /// Sits in front of the persistent `sha_cache` to prevent parallel tasks
     /// from racing through the file-based cache for the same SHA pair.
     pub(super) diff_stats: DashMap<(String, String), LineDiff>,
+    /// In-memory merge-add stats cache: (target_sha, branch_sha) -> LineDiff.
+    /// Same front-over-disk role as [`Self::diff_stats`], for
+    /// [`Repository::merge_add_diff_stats_by_sha`].
+    pub(super) merge_add_stats: DashMap<(String, String), LineDiff>,
 
     // ========== Per-worktree values (keyed by path) ==========
     //

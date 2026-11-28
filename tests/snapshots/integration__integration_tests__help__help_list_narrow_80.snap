@@ -158,7 +158,8 @@ Output as JSON for scripting:
  Status   Compact symbols (see below)                                           
  @±       Uncommitted changes, including untracked files: +added -deleted lines 
  ^↕       Commits ahead/behind default branch                                   
- ^…±      Line diffs since the merge-base (three-dot) with the default branch   
+ ^…±      Lines merging into the default branch would add and delete; the       
+          merge-base diff (three-dot) when the merge would conflict             
  Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and    
           [2mcommit.generation[0m                                                     
  Remote⇅  Commits ahead/behind tracking branch                                  
@@ -511,7 +512,8 @@ Independent facts; the table's priority-collapsed symbol is [2mdisplay.state[0
  ──────── ─────────── ───────────────────────────────────────────────────────── 
  [2mahead[0m    number/null Commits ahead of the default branch (null for orphans)    
  [2mbehind[0m   number/null Commits behind the default branch (null for orphans)      
- [2mdiff[0m     object/null Lines changed vs the default branch: [2m{added, deleted}[0m     
+ [2mdiff[0m     object/null Lines merging into the default branch would change, as in 
+                      [2m^…±[0m: [2m{added, deleted}[0m                                     
  [2morphan[0m   boolean/nul No common ancestor with the default branch                
           l                                                                     
  [2mintegrat[0m object/null [2m{reason}[0m — which check found the content integrated (see  

@@ -9,7 +9,8 @@
 //!
 //! Layout: `.git/wt/cache/{kind}/{key}.json` where `kind` is one of
 //! `merge-tree-conflicts`, `merge-add-probe`, `is-ancestor`,
-//! `has-added-changes`, `diff-stats`, `ahead-behind`, or `merge-base`.
+//! `has-added-changes`, `diff-stats`, `merge-add-stats`, `ahead-behind`, or
+//! `merge-base`.
 //! Symmetric kinds sort the SHA pair so `(A, B)` and `(B, A)` hit the same
 //! entry; asymmetric kinds preserve ordering. See [`crate::cache`] for
 //! read/write/clear mechanics, torn-write semantics, and the
@@ -30,6 +31,7 @@ const KIND_MERGE_ADD_PROBE: &str = "merge-add-probe";
 const KIND_IS_ANCESTOR: &str = "is-ancestor";
 const KIND_HAS_ADDED_CHANGES: &str = "has-added-changes";
 const KIND_DIFF_STATS: &str = "diff-stats";
+const KIND_MERGE_ADD_STATS: &str = "merge-add-stats";
 const KIND_AHEAD_BEHIND: &str = "ahead-behind";
 const KIND_MERGE_BASE: &str = "merge-base";
 
@@ -40,6 +42,7 @@ const ALL_KINDS: &[&str] = &[
     KIND_IS_ANCESTOR,
     KIND_HAS_ADDED_CHANGES,
     KIND_DIFF_STATS,
+    KIND_MERGE_ADD_STATS,
     KIND_AHEAD_BEHIND,
     KIND_MERGE_BASE,
 ];
@@ -182,6 +185,40 @@ pub(super) fn put_diff_stats(repo: &Repository, base_sha: &str, head_sha: &str, 
         repo,
         KIND_DIFF_STATS,
         &asymmetric_key(base_sha, head_sha),
+        &value,
+        MAX_ENTRIES_PER_KIND,
+    );
+}
+
+// merge-add-stats (asymmetric)
+
+/// Look up a cached `merge_add_diff_stats_by_sha(target_sha, branch_sha)`
+/// result.
+///
+/// Asymmetric: the stats measure the merged tree against `target_sha`'s tree.
+pub(super) fn merge_add_stats(
+    repo: &Repository,
+    target_sha: &str,
+    branch_sha: &str,
+) -> Option<LineDiff> {
+    cache::read(
+        repo,
+        KIND_MERGE_ADD_STATS,
+        &asymmetric_key(target_sha, branch_sha),
+    )
+}
+
+/// Store a `merge_add_diff_stats_by_sha(target_sha, branch_sha)` result.
+pub(super) fn put_merge_add_stats(
+    repo: &Repository,
+    target_sha: &str,
+    branch_sha: &str,
+    value: LineDiff,
+) {
+    cache::write_with_lru(
+        repo,
+        KIND_MERGE_ADD_STATS,
+        &asymmetric_key(target_sha, branch_sha),
         &value,
         MAX_ENTRIES_PER_KIND,
     );
@@ -789,6 +826,135 @@ mod tests {
         assert_eq!(cached.deleted, 888);
     }
 
+    /// Squash-merge `feature` into `main`, then land unrelated work on `main`.
+    /// Returns `(main_sha, feature_sha)`.
+    fn squash_merged_fixture(test: &TestRepo) -> (String, String) {
+        fs::write(test.root_path().join("f.txt"), "a\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "Base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("f.txt"), "a\nb\nc\n").unwrap();
+        test.run_git(&["commit", "-am", "Feature"]);
+        test.run_git(&["checkout", "main"]);
+        test.run_git(&["merge", "--squash", "feature"]);
+        test.run_git(&["commit", "-m", "Squash feature"]);
+        fs::write(test.root_path().join("other.txt"), "x\n").unwrap();
+        test.run_git(&["add", "other.txt"]);
+        test.run_git(&["commit", "-m", "Unrelated"]);
+        (
+            test.git_output(&["rev-parse", "main"]),
+            test.git_output(&["rev-parse", "feature"]),
+        )
+    }
+
+    #[test]
+    fn test_merge_add_diff_stats_measures_merged_tree_and_caches() {
+        let test = TestRepo::with_initial_commit();
+        let (main_sha, feature_sha) = squash_merged_fixture(&test);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        // The three-dot diff still reports the squashed branch's own lines.
+        let three_dot = repo
+            .branch_diff_stats_by_sha(&main_sha, &feature_sha)
+            .unwrap();
+        assert_eq!((three_dot.added, three_dot.deleted), (2, 0));
+        // Merging it would add nothing.
+        let merge_add = repo
+            .merge_add_diff_stats_by_sha(&main_sha, &feature_sha)
+            .unwrap();
+        assert!(merge_add.is_empty(), "{merge_add:?}");
+        assert_eq!(
+            merge_add_stats(&repo, &main_sha, &feature_sha),
+            Some(merge_add)
+        );
+
+        // A fresh repository reads the persisted entry instead of recomputing.
+        let tampered = LineDiff {
+            added: 7,
+            deleted: 3,
+        };
+        put_merge_add_stats(&repo, &main_sha, &feature_sha, tampered);
+        let repo2 = Repository::at(test.root_path()).unwrap();
+        assert_eq!(
+            repo2
+                .merge_add_diff_stats_by_sha(&main_sha, &feature_sha)
+                .unwrap(),
+            tampered
+        );
+    }
+
+    #[test]
+    fn test_merge_add_diff_stats_falls_back_to_three_dot_on_conflict() {
+        let test = TestRepo::with_initial_commit();
+        fs::write(test.root_path().join("f.txt"), "a\n").unwrap();
+        test.run_git(&["add", "f.txt"]);
+        test.run_git(&["commit", "-m", "Base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("f.txt"), "feature\nb\n").unwrap();
+        test.run_git(&["commit", "-am", "Feature"]);
+        test.run_git(&["checkout", "main"]);
+        fs::write(test.root_path().join("f.txt"), "main\n").unwrap();
+        test.run_git(&["commit", "-am", "Main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let stats = repo
+            .merge_add_diff_stats_by_sha(&main_sha, &feature_sha)
+            .unwrap();
+        assert_eq!(
+            stats,
+            repo.branch_diff_stats_by_sha(&main_sha, &feature_sha)
+                .unwrap()
+        );
+        assert_eq!((stats.added, stats.deleted), (2, 1));
+    }
+
+    #[test]
+    fn test_merge_add_diff_stats_orphan_is_empty() {
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["checkout", "--orphan", "orphan"]);
+        fs::write(test.root_path().join("orphan.txt"), "o\n").unwrap();
+        test.run_git(&["add", "orphan.txt"]);
+        test.run_git(&["commit", "-m", "Orphan"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let orphan_sha = test.git_output(&["rev-parse", "orphan"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(
+            repo.merge_add_diff_stats_by_sha(&main_sha, &orphan_sha)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_merge_add_diff_stats_sparse_checkout_filters_and_skips_cache() {
+        let test = TestRepo::with_initial_commit();
+        fs::create_dir_all(test.root_path().join("visible")).unwrap();
+        fs::create_dir_all(test.root_path().join("hidden")).unwrap();
+        fs::write(test.root_path().join("visible/v.txt"), "v\n").unwrap();
+        fs::write(test.root_path().join("hidden/h.txt"), "h\n").unwrap();
+        test.run_git(&["add", "."]);
+        test.run_git(&["commit", "-m", "Base"]);
+        test.run_git(&["checkout", "-b", "feature"]);
+        fs::write(test.root_path().join("visible/v.txt"), "v\nv2\n").unwrap();
+        fs::write(test.root_path().join("hidden/h.txt"), "h\nh2\nh3\n").unwrap();
+        test.run_git(&["commit", "-am", "Feature"]);
+        test.run_git(&["checkout", "main"]);
+        let main_sha = test.git_output(&["rev-parse", "main"]);
+        let feature_sha = test.git_output(&["rev-parse", "feature"]);
+        test.run_git(&["sparse-checkout", "init", "--cone"]);
+        test.run_git(&["sparse-checkout", "set", "visible"]);
+
+        let repo = Repository::at(test.root_path()).unwrap();
+        let stats = repo
+            .merge_add_diff_stats_by_sha(&main_sha, &feature_sha)
+            .unwrap();
+        assert_eq!((stats.added, stats.deleted), (1, 0), "only visible/ counts");
+        assert_eq!(merge_add_stats(&repo, &main_sha, &feature_sha), None);
+    }
+
     #[test]
     fn test_clear_all_covers_all_kinds() {
         let test = TestRepo::with_initial_commit();
@@ -816,11 +982,20 @@ mod tests {
                 deleted: 0,
             },
         );
+        put_merge_add_stats(
+            &repo,
+            "a",
+            "b",
+            LineDiff {
+                added: 1,
+                deleted: 0,
+            },
+        );
         put_ahead_behind(&repo, "a", "b", (1, 0));
         put_merge_base(&repo, "a", "b", &Some("c".to_string()));
 
         let cleared = clear_all(&repo).unwrap();
-        assert_eq!(cleared, 7, "should clear one entry per kind");
+        assert_eq!(cleared, 8, "should clear one entry per kind");
 
         // All kinds should be empty
         assert_eq!(merge_conflicts(&repo, "a", "b"), None);
@@ -828,6 +1003,7 @@ mod tests {
         assert_eq!(is_ancestor(&repo, "a", "b"), None);
         assert_eq!(has_added_changes(&repo, "a", "b"), None);
         assert_eq!(diff_stats(&repo, "a", "b"), None);
+        assert_eq!(merge_add_stats(&repo, "a", "b"), None);
         assert_eq!(ahead_behind(&repo, "a", "b"), None);
         assert_eq!(merge_base(&repo, "a", "b"), None);
     }

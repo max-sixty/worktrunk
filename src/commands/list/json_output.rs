@@ -195,7 +195,7 @@ pub struct JsonMain {
     /// Commits behind default branch
     pub behind: usize,
 
-    /// Lines added/deleted vs default branch
+    /// Lines merging into the default branch would add/delete
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<JsonDiff>,
 }

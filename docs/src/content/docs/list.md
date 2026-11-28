@@ -81,7 +81,7 @@ $ wt list --format=json
 | Status | Compact symbols (see below) |
 | @± | Uncommitted changes, including untracked files: +added -deleted lines |
 | ^↕ | Commits ahead/behind default branch |
-| ^…± | Line diffs since the merge-base (three-dot) with the default branch |
+| ^…± | Lines merging into the default branch would add and delete; the merge-base diff (three-dot) when the merge would conflict |
 | Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) |
 | Remote⇅ | Commits ahead/behind tracking branch |
 | CI | PR/MR number colored by pipeline status; `--full` only |
@@ -357,7 +357,7 @@ Independent facts; the table's priority-collapsed symbol is `display.state`.
 |-------|------|-------------|
 | `ahead` | number/null | Commits ahead of the default branch (null for orphans) |
 | `behind` | number/null | Commits behind the default branch (null for orphans) |
-| `diff` | object/null | Lines changed vs the default branch: `{added, deleted}` |
+| `diff` | object/null | Lines merging into the default branch would change, as in `^…±`: `{added, deleted}` |
 | `orphan` | boolean/null | No common ancestor with the default branch |
 | `integration` | object/null | `{reason}` — which check found the content [integrated](/remove/#branch-cleanup) (see [integration reasons](#integration-reasons)); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) |
 | `merge_conflicts` | boolean/null | Merging into the default branch would conflict, simulated locally with `git merge-tree` |
