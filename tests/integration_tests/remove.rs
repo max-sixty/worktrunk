@@ -4930,6 +4930,72 @@ fn test_remove_drains_trash_under_inherited_git_dir(mut repo: TestRepo) {
     });
 }
 
+/// `wt remove` stops the removed worktree's fsmonitor daemon with that
+/// worktree as cwd, so the stop must not forward an inherited `GIT_DIR`. A
+/// `!wt` alias from linked worktree `l1` exports `GIT_DIR` as `l1`'s private
+/// gitdir, and `git fsmonitor--daemon stop` run in `l2` with that `GIT_DIR`
+/// stops `l1`'s daemon and leaves `l2`'s running.
+///
+/// A `git` shim on `PATH` records the `GIT_DIR` the stop receives and exits
+/// without contacting a daemon.
+#[rstest]
+#[cfg(unix)]
+fn test_remove_fsmonitor_stop_drops_inherited_git_dir(mut repo: TestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let l1 = repo.add_worktree("l1");
+    let l2 = repo.add_worktree("l2");
+    let l1_git_dir = fs::read_to_string(l1.join(".git")).unwrap();
+    let l1_git_dir = l1_git_dir.trim().strip_prefix("gitdir: ").unwrap();
+
+    let scratch = crate::common::test_tempdir();
+    let marker = scratch.path().join("stop-git-dir");
+    let bin_dir = scratch.path().join("bin");
+    fs::create_dir(&bin_dir).unwrap();
+    let shim = bin_dir.join("git");
+    fs::write(
+        &shim,
+        format!(
+            r#"#!/bin/sh
+if [ "$1 $2" = 'fsmonitor--daemon stop' ]; then
+  printf '%s' "$GIT_DIR" > {marker}
+  exit 0
+fi
+exec {real_git} "$@"
+"#,
+            marker = shell_escape::unix::escape(marker.to_string_lossy()),
+            real_git = shell_escape::unix::escape(which::which("git").unwrap().to_string_lossy()),
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut path = vec![bin_dir];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+
+    let output = repo
+        .wt_command()
+        .current_dir(&l1)
+        .args(["remove", "l2"])
+        .env("PATH", std::env::join_paths(path).unwrap())
+        .env("GIT_DIR", l1_git_dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "wt remove failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let seen = fs::read_to_string(&marker)
+        .unwrap_or_else(|e| panic!("no fsmonitor daemon stop ran for {}: {e}", l2.display()));
+    assert_eq!(
+        seen,
+        "",
+        "fsmonitor daemon stop in {} inherited GIT_DIR",
+        l2.display()
+    );
+}
+
 /// `wt remove -vv` resolves every fsmonitor daemon in ONE `lsof` spawn and
 /// traces the sweep.
 ///
