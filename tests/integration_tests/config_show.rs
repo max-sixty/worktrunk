@@ -5892,7 +5892,7 @@ fn test_plugin_layout_is_consolidated() {
     assert!(skill_dirs > 0, "skills/ holds no skill directories");
 
     let hooks_json = json("plugins/worktrunk/hooks/hooks.json");
-    let commands: Vec<(&str, &str)> = hooks_json["hooks"]
+    let commands: Vec<(&str, &str, bool)> = hooks_json["hooks"]
         .as_object()
         .expect("hooks.json must have a `hooks` object")
         .iter()
@@ -5912,6 +5912,7 @@ fn test_plugin_layout_is_consolidated() {
                         hook["command"]
                             .as_str()
                             .expect("each hook must define a command"),
+                        hook["async"].as_bool().unwrap_or(false),
                     )
                 })
         })
@@ -5927,8 +5928,14 @@ fn test_plugin_layout_is_consolidated() {
     // marker events end in `|| true`: a `wt` too old to have `hook` exits 2,
     // which Claude Code reads as blocking the prompt, tool call, permission,
     // or stop. The worktree events must fail when `wt` does.
+    //
+    // Events that only set a marker run async, so Claude Code doesn't wait on
+    // the write. PermissionRequest stays synchronous because its output
+    // approves an EnterWorktree, and Claude Code drops an async hook's
+    // decision. SessionEnd and the worktree events stay synchronous too:
+    // Claude Code uses the worktree events' output and exit status.
     const HOOK: &str = r#"bash "$CLAUDE_PLUGIN_ROOT/hooks/wt.sh" config plugins claude hook"#;
-    let mut events: Vec<&str> = commands.iter().map(|(event, _)| *event).collect();
+    let mut events: Vec<&str> = commands.iter().map(|(event, ..)| *event).collect();
     events.sort_unstable();
     assert_eq!(
         events,
@@ -5943,13 +5950,18 @@ fn test_plugin_layout_is_consolidated() {
             "WorktreeRemove",
         ]
     );
-    for (event, command) in &commands {
+    for (event, command, is_async) in &commands {
         let expected = if event.starts_with("Worktree") {
             HOOK.to_string()
         } else {
             format!("{HOOK} || true")
         };
         assert_eq!(*command, expected, "{event} hook command drifted");
+        let expected_async = matches!(
+            *event,
+            "UserPromptSubmit" | "Notification" | "PreToolUse" | "Stop"
+        );
+        assert_eq!(*is_async, expected_async, "{event} hook async drifted");
     }
     // The product description must not drift across tools. Byte-identical is
     // schema-impossible (Codex omits the activity clause, Gemini says

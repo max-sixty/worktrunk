@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use color_print::cformat;
-use worktrunk::git::{Repository, WorktrunkError};
+use worktrunk::git::{CommandError, Repository, WorktrunkError};
 use worktrunk::path::paths_match;
 use worktrunk::shell_exec::Cmd;
 use worktrunk::styling::{eprintln, info_message, println, progress_message, success_message};
@@ -329,6 +329,13 @@ fn print_allow_decision() -> anyhow::Result<()> {
 
 /// Sets or clears the activity marker in the session's launch worktree.
 /// Marker failures never fail a Claude hook.
+///
+/// The marker events run as async hooks, so Claude Code no longer waits for
+/// one write before starting the next event's hook, and every worktree's
+/// sessions share the repository's `config.lock`. A write that finds the lock
+/// held retries briefly instead of dropping the marker. Writes are not
+/// ordered: within a session the events arrive far apart, and an
+/// out-of-order write is corrected by the next event.
 fn set_marker(dir: &Path, marker: Option<&str>) -> anyhow::Result<()> {
     let _ = (|| -> anyhow::Result<()> {
         let repo = Repository::at(dir)?;
@@ -336,18 +343,45 @@ fn set_marker(dir: &Path, marker: Option<&str>) -> anyhow::Result<()> {
             return Ok(());
         };
         let key = format!("worktrunk.state.{branch}.marker");
-        if let Some(marker) = marker {
-            let value = serde_json::json!({
-                "marker": marker,
-                "set_at": worktrunk::utils::epoch_now(),
-            });
-            repo.set_config(&key, &value.to_string())?;
-        } else {
-            repo.unset_config(&key)?;
-        }
-        Ok(())
+        retry_on_config_lock(|| {
+            if let Some(marker) = marker {
+                let value = serde_json::json!({
+                    "marker": marker,
+                    "set_at": worktrunk::utils::epoch_now(),
+                });
+                repo.set_config(&key, &value.to_string())
+            } else {
+                repo.unset_config(&key).map(|_| ())
+            }
+        })
     })();
     Ok(())
+}
+
+/// Runs a `git config` write, retrying while another writer holds
+/// `config.lock`. Git exits with -1 when it cannot take the lock (255 on Unix).
+///
+/// Git 2.56 waits for the lock itself, for `core.configLockTimeout` (1s by
+/// default); older Gits fail at once. Retrying until the same 1s deadline gives
+/// older Gits Git's own default and adds no wait on top of a newer Git's.
+fn retry_on_config_lock(mut write: impl FnMut() -> anyhow::Result<()>) -> anyhow::Result<()> {
+    const BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(25);
+    let deadline = std::time::Instant::now() + BUDGET;
+    loop {
+        match write() {
+            Err(err)
+                if std::time::Instant::now() < deadline
+                    && err
+                        .chain()
+                        .find_map(|e| e.downcast_ref::<CommandError>())
+                        .is_some_and(|e| matches!(e.exit_code, Some(255 | -1))) =>
+            {
+                std::thread::sleep(DELAY);
+            }
+            result => return result,
+        }
+    }
 }
 
 /// The running `wt` binary, which the hook runs again for each action.
