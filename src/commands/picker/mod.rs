@@ -1663,7 +1663,7 @@ Add a [commit.generation] command in:
 
 ```toml
 [commit.generation]
-command = "llm -m haiku"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 
 [list]
 summary = true
@@ -2665,10 +2665,10 @@ pub mod tests {
         assert_yaml_snapshot!(decisions, @r#"
         - case: summaries off + no command
           command: ~
-          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''\"\n\n[list]\nsummary = true\n```\n"
         - case: summaries on + no command
           command: ~
-          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"llm -m haiku\"\n\n[list]\nsummary = true\n```\n"
+          hint: "Summaries not configured\n\nAdd a [commit.generation] command in:\n[TEST_CONFIG]\n\n```toml\n[commit.generation]\ncommand = \"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''\"\n\n[list]\nsummary = true\n```\n"
         - case: summaries off + command
           command: ~
           hint: "Summaries off\n\nEnable summaries in:\n[TEST_CONFIG]\n\n```toml\n[list]\nsummary = true\n```\n"
