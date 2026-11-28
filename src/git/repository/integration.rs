@@ -284,7 +284,7 @@ impl Repository {
     /// the other and the subprocess fires twice. The shared entry lock
     /// collapses both — and any cross-row repeat of the same pair — to a single
     /// spawn, mirroring [`Self::merge_base_by_sha`].
-    fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
+    pub(super) fn merge_tree_outcome(&self, a: &str, b: &str) -> anyhow::Result<MergeTreeOutcome> {
         use dashmap::mapref::entry::Entry;
 
         // Keyed in call order, not normalized: both dedup call sites pass

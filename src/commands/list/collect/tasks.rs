@@ -448,10 +448,13 @@ fn compute_is_ancestor(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     })
 }
 
-/// Branch diff stats vs the mainline tip (informational stats).
+/// Branch diff stats: what merging the branch into the mainline tip would add.
 ///
 /// Measures against [`TaskContext::comparison_base`] — the upstream-aware
 /// default-branch tip — so a stale local default doesn't inflate the diff.
+/// The merged-tree measure agrees with the `⊂` integration probe, so a
+/// squash-merged branch reads as adding nothing rather than as its full
+/// three-dot diff; see [`Repository::merge_add_diff_stats_by_sha`].
 fn compute_branch_diff(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // When no comparison base resolves, return empty diff (cells show empty)
     let Some(base) = ctx.comparison_base() else {
@@ -465,7 +468,7 @@ fn compute_branch_diff(ctx: &TaskContext) -> anyhow::Result<TaskResult> {
     // rebase-in-progress rationale.
     let base_sha = ctx.resolve_sha(base)?;
     let head_sha = ctx.branch_check_sha()?;
-    let diff = repo.branch_diff_stats_by_sha(&base_sha, &head_sha)?;
+    let diff = repo.merge_add_diff_stats_by_sha(&base_sha, &head_sha)?;
 
     Ok(TaskResult::BranchDiff {
         item_idx: ctx.item_idx,

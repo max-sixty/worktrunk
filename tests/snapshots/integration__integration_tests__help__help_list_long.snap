@@ -143,22 +143,22 @@ Output as JSON for scripting:
 
 [1m[32mColumns[0m
 
-  Column                                           Shows                                          
- ──────── ─────────────────────────────────────────────────────────────────────────────────────── 
- Branch   Branch name, elided with … past 32 characters; a detached worktree shows its short hash 
- Status   Compact symbols (see below)                                                             
- @±       Uncommitted changes, including untracked files: +added -deleted lines                   
- ^↕       Commits ahead/behind default branch                                                     
- ^…±      Line diffs since the merge-base (three-dot) with the default branch                     
- Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m    
- Remote⇅  Commits ahead/behind tracking branch                                                    
- CI       PR/MR number colored by pipeline status; [2m--full[0m only                                    
- Path     Worktree directory                                                                      
- URL      Dev server URL from project config; dimmed if port is not listening                     
- (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]       
- Commit   Short hash, abbreviated per [2mcore.abbrev[0m                                                 
- Age      Time since last commit                                                                  
- Message  Last commit message (truncated)                                                         
+  Column                                                            Shows                                                           
+ ──────── ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+ Branch   Branch name, elided with … past 32 characters; a detached worktree shows its short hash                                   
+ Status   Compact symbols (see below)                                                                                               
+ @±       Uncommitted changes, including untracked files: +added -deleted lines                                                     
+ ^↕       Commits ahead/behind default branch                                                                                       
+ ^…±      Lines merging into the default branch would add and delete; the merge-base diff (three-dot) when the merge would conflict 
+ Summary  LLM-generated branch summary; requires [2m--full[0m, [2msummary = true[0m, and [2mcommit.generation[0m                                      
+ Remote⇅  Commits ahead/behind tracking branch                                                                                      
+ CI       PR/MR number colored by pipeline status; [2m--full[0m only                                                                      
+ Path     Worktree directory                                                                                                        
+ URL      Dev server URL from project config; dimmed if port is not listening                                                       
+ (custom) User-defined custom columns from [2m[list.custom-columns][0m user config [experimental]                                         
+ Commit   Short hash, abbreviated per [2mcore.abbrev[0m                                                                                   
+ Age      Time since last commit                                                                                                    
+ Message  Last commit message (truncated)                                                                                           
 
 In the headers, [2m@[0m stands for the worktree's own [2mHEAD[0m and [2m^[0m for the default branch, whatever it is named — the same shortcuts [2mwt switch[0m accepts.
 
@@ -419,7 +419,7 @@ Independent facts; the table's priority-collapsed symbol is [2mdisplay.state[0
  ─────────────── ──────────── ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
  [2mahead[0m           number/null  Commits ahead of the default branch (null for orphans)                                                                                                                          
  [2mbehind[0m          number/null  Commits behind the default branch (null for orphans)                                                                                                                            
- [2mdiff[0m            object/null  Lines changed vs the default branch: [2m{added, deleted}[0m                                                                                                                           
+ [2mdiff[0m            object/null  Lines merging into the default branch would change, as in [2m^…±[0m: [2m{added, deleted}[0m                                                                                                 
  [2morphan[0m          boolean/null No common ancestor with the default branch                                                                                                                                      
  [2mintegration[0m     object/null  [2m{reason}[0m — which check found the content integrated (see integration reasons); absent when determined not-integrated, null when undetermined (a check timed out or was skipped) 
  [2mmerge_conflicts[0m boolean/null Merging into the default branch would conflict, simulated locally with [2mgit merge-tree[0m                                                                                           

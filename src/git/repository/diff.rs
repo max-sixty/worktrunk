@@ -9,6 +9,7 @@ use dashmap::mapref::entry::Entry;
 use crate::git::{CommandError, PlumbingDiff};
 use crate::shell_exec::Cmd;
 
+use super::integration::MergeTreeOutcome;
 use super::working_tree::{TempIndex, WorkingTree, path_to_logging_context};
 use super::{DiffStats, LineDiff, Repository};
 
@@ -708,6 +709,98 @@ impl Repository {
             super::sha_cache::put_diff_stats(self, base_sha, head_sha, result);
         }
         Ok(result)
+    }
+
+    /// Line diff statistics for what merging `branch_sha` into `target_sha`
+    /// would add: `target`'s tree against the tree
+    /// `git merge-tree --write-tree <target> <branch>` produces.
+    ///
+    /// This is the quantity the integration probe reduces to a boolean
+    /// (`would_merge_add`), so `wt list`'s `^…±` column and the `⊂` symbol
+    /// read the same thing: a branch whose changes already reached the target
+    /// by squash merge reports nothing, where the three-dot diff from the
+    /// merge-base reports everything the branch wrote. The merge resolves the
+    /// branch against the target's current content, so counts can also differ
+    /// from the three-dot diff on a branch the target has since overlapped.
+    ///
+    /// Shares the merge-tree subprocess with the integration and conflict
+    /// probes through the in-memory merge-tree map, so the cold cost over the
+    /// three-dot diff is one tree-to-tree diff in its place. Falls back to the
+    /// three-dot [`Self::branch_diff_stats_by_sha`] when there is no merged
+    /// tree to measure — a conflicting merge, or an orphan branch.
+    ///
+    /// Caches the stats, never the merged tree: nothing references the tree
+    /// `merge-tree --write-tree` writes, so `git gc` can prune it.
+    pub fn merge_add_diff_stats_by_sha(
+        &self,
+        target_sha: &str,
+        branch_sha: &str,
+    ) -> anyhow::Result<LineDiff> {
+        // Same sparse-checkout rule as the three-dot diff: the pathspec makes
+        // the result depend on the checkout, not only the two SHAs.
+        let sparse_paths = self.sparse_checkout_paths();
+        if !sparse_paths.is_empty() {
+            return self.compute_merge_add_diff_stats(target_sha, branch_sha, sparse_paths);
+        }
+
+        match self
+            .cache
+            .merge_add_stats
+            .entry((target_sha.to_string(), branch_sha.to_string()))
+        {
+            Entry::Occupied(e) => Ok(*e.get()),
+            Entry::Vacant(e) => {
+                if let Some(cached) =
+                    super::sha_cache::merge_add_stats(self, target_sha, branch_sha)
+                {
+                    return Ok(*e.insert(cached));
+                }
+                let result =
+                    self.compute_merge_add_diff_stats(target_sha, branch_sha, sparse_paths)?;
+                super::sha_cache::put_merge_add_stats(self, target_sha, branch_sha, result);
+                Ok(*e.insert(result))
+            }
+        }
+    }
+
+    fn compute_merge_add_diff_stats(
+        &self,
+        target_sha: &str,
+        branch_sha: &str,
+        sparse_paths: &[String],
+    ) -> anyhow::Result<LineDiff> {
+        // Unrelated histories can't be merge-tree simulated (git refuses with
+        // exit 128); the three-dot path reports them as empty.
+        if self.merge_base_by_sha(target_sha, branch_sha)?.is_none() {
+            return self.branch_diff_stats_by_sha(target_sha, branch_sha);
+        }
+        let merged_tree = match self.merge_tree_outcome(target_sha, branch_sha)? {
+            MergeTreeOutcome::Clean { tree } => tree,
+            MergeTreeOutcome::Conflict => {
+                return self.branch_diff_stats_by_sha(target_sha, branch_sha);
+            }
+        };
+
+        let _guard = super::super::HEAVY_OPS_SEMAPHORE.acquire();
+
+        // Sparse paths are root-relative, but git resolves pathspecs against
+        // the cwd, which is the user's subdirectory when run from one.
+        let sparse_pathspecs: Vec<String> = sparse_paths
+            .iter()
+            .map(|path| format!(":(top){path}"))
+            .collect();
+        let mut args = PlumbingDiff::Tree.args(&[
+            "-r",
+            "--shortstat",
+            "--find-renames",
+            target_sha,
+            &merged_tree,
+            "--",
+        ]);
+        args.extend(sparse_pathspecs.iter().map(String::as_str));
+
+        let stdout = self.run_command(&args)?;
+        Ok(LineDiff::from_shortstat(&stdout))
     }
 }
 

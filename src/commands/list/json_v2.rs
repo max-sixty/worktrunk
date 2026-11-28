@@ -333,7 +333,7 @@ pub struct JsonDefaultBranch {
     /// Commits behind; null while unresolved (and for orphans).
     pub behind: Option<usize>,
 
-    /// Lines added/deleted vs the default branch; null while unresolved.
+    /// Lines merging into the default branch would add/delete; null while unresolved.
     pub diff: Option<JsonDiff>,
 
     /// No merge-base with the default branch; null while unresolved.
