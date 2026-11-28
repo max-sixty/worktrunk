@@ -1560,6 +1560,13 @@ impl Repository {
         self.wt_dir().join("trash")
     }
 
+    /// The file recording the worktree `wt switch` last left, for `wt switch -`.
+    ///
+    /// Returns `<git-common-dir>/wt/switch-history.json`.
+    pub fn switch_history_path(&self) -> PathBuf {
+        self.wt_dir().join("switch-history.json")
+    }
+
     /// The repository root path (the main worktree directory).
     ///
     /// - Normal repositories: the main worktree directory (parent of .git)

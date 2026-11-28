@@ -3154,6 +3154,22 @@ impl TestRepo {
             .run()
             .unwrap();
     }
+
+    /// Record `branch` as where `wt switch -` returns, without a worktree
+    /// path (as `wt config state previous-branch set` leaves it).
+    pub fn set_switch_previous(&self, branch: &str) {
+        crate::git::Repository::at(self.root_path())
+            .unwrap()
+            .set_switch_previous(branch)
+            .unwrap();
+    }
+
+    /// The branch `wt switch -` would return to.
+    pub fn switch_previous(&self) -> Option<String> {
+        crate::git::Repository::at(self.root_path())
+            .unwrap()
+            .switch_previous()
+    }
 }
 
 impl TestRepoBase for TestRepo {}

@@ -503,7 +503,7 @@ impl Repository {
                 .into()
             }),
             "-" => {
-                // Read from worktrunk.history (recorded by wt switch operations)
+                // Read from the switch history (recorded by wt switch operations)
                 self.switch_previous().ok_or_else(|| {
                     GitError::Other {
                         message: cformat!(
