@@ -346,9 +346,9 @@ impl Repository {
             // waiting has exited, a write there SIGPIPEs git before the bit
             // lands (#4273, #4585). The buffer is unlinked before it is
             // replayed, so that SIGPIPE cannot leave a `.stderr.*.json`
-            // behind. Creating it is best-effort: `:` aborts `sh` when the
-            // cache directory is not writable, and a missing bit must not
-            // fail the probe.
+            // behind. Creating it is best-effort and uses `true`, not `:`: a
+            // failed redirect on a special builtin aborts `sh`, and a missing
+            // bit must not fail the probe.
             let script = r#"mkdir -p "$(dirname "$3")" 2>/dev/null
 err="$3.stderr.$$.json"
 if true 2>/dev/null > "$err"; then
