@@ -796,11 +796,9 @@ To change which branch a worktree is on, use `git switch` inside that worktree.
         after_long_help = r#"Shows uncommitted changes, divergence from the default branch and remote, and optional CI status and LLM summaries.
 
 <!-- demo: wt-list.gif 1600x900 | Progressive rendering, then --full and --branches -->
-The table renders progressively: branch names, paths, and commit hashes appear immediately, then status, divergence, and other columns fill in as background git operations complete.
-
 ## Full mode
 
-`--full` adds the two columns that reach off-machine: [CI status](#ci-status) (forge pipeline pass/fail, over the network) and [LLM-generated summaries](#llm-summaries) of each branch's changes.
+`--full` adds the [CI status](#ci-status) column, fetched from the forge over the network, and [LLM-generated summaries](#llm-summaries) of each branch's changes.
 
 ## Examples
 
@@ -818,21 +816,7 @@ $ wt list
 ○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
 ```
 
-Include CI status and LLM summaries:
-
-<!-- wt list --full -->
-```console
-$ wt list --full
-  Branch       Status       @±        ^↕        ^…±     Summary                       Remote⇅  CI
-@ feature-api  +   ↕⇡     +54   -5   ↑4  ↓1  +234  -24  Refactor API to REST archit…   ⇡3      #412
-^ main             ^⇅                                                                  ⇡1  ⇣1  #
-+ fix-auth         ↕|                ↑2  ↓1   +25  -11  Harden auth with constant-t…     |     #408
-+ fix-typos        _|                                                                    |     #410
-
-○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path, Commit, Age, Message
-```
-
-Include branches that don't have worktrees:
+Include CI status, LLM summaries, and branches without worktrees:
 
 <!-- wt list --branches --full -->
 ```console
@@ -863,9 +847,9 @@ $ wt list --format=json
 | @± | Uncommitted changes, including untracked files: +added -deleted lines |
 | ^↕ | Commits ahead/behind default branch |
 | ^…± | Line diffs since the merge-base (three-dot) with the default branch |
-| Summary | LLM-generated branch summary; requires `--full`, `summary = true`, and [`commit.generation`](/config/#commit) |
+| Summary | LLM-generated branch summary (see [LLM summaries](#llm-summaries)) |
 | Remote⇅ | Commits ahead/behind tracking branch |
-| CI | PR/MR number colored by pipeline status; `--full` only |
+| CI | PR/MR number colored by pipeline status; shown with `--full` |
 | Path | Worktree directory |
 | URL | Dev server URL from project config; dimmed if port is not listening |
 | *(custom)* | User-defined [custom columns](#custom-columns) from `[list.custom-columns]` user config [experimental] |
@@ -877,7 +861,7 @@ In the headers, `@` stands for the worktree's own `HEAD` and `^` for the default
 
 Counts too large for their column are shortened, rounded down, and drawn brighter: `C` is hundreds and `K` thousands (`↑3C` is 300–399 commits, `+2K` is 2,000–2,999 lines), and `∞` means 10,000 or more. Line counts stay exact up to 999; commit counts up to 99. `--format=json` carries the exact counts.
 
-The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); `--format=json` carries every field at any width.
+The table sizes itself to the terminal. When the columns don't all fit, the least important go first — roughly right to left, since the order above runs from identity to nice-to-have — and the summary footer names them (`hidden: Commit, Age, Message`). A wider terminal brings them back. To pin a set rather than leave it to the width, name the columns in [`[list] columns`](/config/#list); a column named there shows even without `--full`. `--format=json` carries every field at any width.
 
 ### Gutter
 
@@ -891,27 +875,76 @@ The leftmost column marks each row by physical presence, from most present to le
 | `/` | Local branch without a worktree (`--branches`) |
 | `\|` | Remote branch, not present locally until fetched (`--remotes`) |
 
+### Status symbols
+
+The Status column packs five subcolumns, left to right. Working-tree flags combine (`+!?`); each other subcolumn shows only its highest-priority symbol, top row first, and is blank when nothing applies. [JSON output](#json-output) carries each as independent fields.
+
+#### Working tree
+
+| Symbol | Meaning |
+|--------|---------|
+| `+` | Staged files |
+| `!` | Modified files (unstaged) |
+| `?` | Untracked files |
+
+#### Worktree
+
+| Symbol | Meaning |
+|--------|---------|
+| `✘` | Merge conflicts |
+| `↻` | Rebase, merge, cherry-pick, revert, or bisect in progress |
+| `⊟` | Prunable (worktree directory or its `.git` gone) |
+| `⊞` | Locked |
+| `⊘` | Detached HEAD |
+| `⚐` | Off the path its branch implies, or the branch is checked out in another worktree too |
+| `/` | Branch without a worktree |
+
+#### Default branch
+
+| Symbol | Meaning |
+|--------|---------|
+| `^` | Primary worktree |
+| `∅` | No common ancestor |
+| `_` | Same commit, clean — [safe to delete](/remove/#branch-cleanup), row dimmed |
+| `⊂` | Content [integrated](/remove/#branch-cleanup) via other history — safe to delete, row dimmed |
+| `✗` | Merging would conflict, counting tracked uncommitted changes |
+| `–` | Same commit, with uncommitted changes |
+| `↕` | Ahead and behind |
+| `↑` | Ahead |
+| `↓` | Behind |
+
+#### Remote
+
+| Symbol | Meaning |
+|--------|---------|
+| `\|` | In sync |
+| `⇡` | Ahead |
+| `⇣` | Behind |
+| `⇅` | Ahead and behind |
+
+The last subcolumn holds the branch's marker, set with [`wt config state marker set`](/config/#wt-config-state-marker), usually an emoji. While the table loads, `·` stands in for a value not yet collected, or one that timed out.
+
 ### CI status
 
-The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). Green, blue, red, yellow, and gray show the pipeline state; magenta and cyan show the review state. [checks object](#checks-object) and [review states](#review-states) give the JSON form of each value:
+The CI column shows the branch's open PR/MR — `#3035` on GitHub, Gitea, and Azure DevOps, `!3035` on GitLab — colored by pipeline status, or a bare `#` when no number is available (e.g. branch workflows without a PR/MR). Green, blue, red, yellow, and gray show the pipeline state; magenta and cyan show the review state:
 
-| Indicator | Value | Meaning |
-|-----------|-------|---------|
-| `#` green | `"passed"` | All checks passed |
-| `#` blue | `"running"` | Checks in progress |
-| `#` red | `"failed"` | One or more checks failed |
-| `#` yellow | `"conflicts"` | Merge conflicts with the target branch |
-| `#` gray | `"no-ci"` | No PR/MR, or no checks configured |
-| `⚠` yellow | `"error"` | CI status could not be fetched (expired login, rate limit, network, etc.) |
-| `#` magenta | `"changes_requested"` | A reviewer requested changes |
-| `#` cyan | `"pending"` | A review is required (e.g. branch protection) but not yet given |
-| (blank) | `pr` and `checks` absent | Branch never pushed, forge CLI not logged in to the host, or no PR/MR and no branch workflow |
+| Indicator | Meaning |
+|-----------|---------|
+| `#` green | All checks passed |
+| `#` blue | Checks in progress |
+| `#` red | One or more checks failed |
+| `#` yellow | Merge conflicts with the target branch |
+| `#` gray | No PR/MR, or no checks configured |
+| `⚠` yellow | CI status could not be fetched (expired login, rate limit, network, etc.) |
+| `#` magenta | A reviewer requested changes |
+| `#` cyan | A review is required (e.g. branch protection) but not yet given |
+| (blank) | Branch never pushed, forge CLI not logged in to the host, or no PR/MR and no branch workflow |
 
-The two remaining review states have no indicator of their own: `"draft"` only dims the cell and `"approved"` leaves the color unchanged.
+A draft PR/MR only dims the cell, and an approved one leaves the color unchanged.
 
-Changes requested (magenta) outranks running checks, while a required review (cyan) only recolors an otherwise green or gray branch. GitLab reports only the `"pending"` and `"draft"` review states.
+Changes requested (magenta) outranks running checks, while a required review (cyan) only recolors an otherwise green or gray branch. GitLab reports only required reviews and drafts.
 
-CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR (`"draft"`) or when unpushed local changes make the status stale (`checks.stale`). Results are cached for 30-60 seconds; use `wt config state cache` to view or clear.
+CI cells are clickable links to the PR or pipeline page, and appear dimmed for a draft PR/MR or when unpushed local changes make the status stale. Results are cached for 30-60 seconds; use `wt config state cache` to view or clear.
 
 ### LLM summaries
 
@@ -927,82 +960,7 @@ Each `[list.custom-columns]` entry in user config adds a column. Its key sets th
 template = "{{ vars.ticket }}"
 ```
 
-The [custom columns config](/config/#custom-columns) covers templates, widths, and drop priority.
-
-## Status symbols
-
-The Status column packs several subcolumns, left to right, each mapping to a schema-2 field in `--format=json` (schema 1 spells several of them differently — see [Schema 1](#schema-1)). Working-tree flags are independent and co-occur — any combination shows at once. The other subcolumns are mutually exclusive: each shows a single symbol, the highest-priority state in top-to-bottom table order, and is blank when nothing applies.
-
-### Working tree
-
-Independent flags from `git status`; several can show at once (e.g. `+!?`). Each maps to a boolean in the [changes object](#changes-object):
-
-| Symbol | worktree.changes | Meaning |
-|--------|------------------|---------|
-| `+` | `staged` | Staged files |
-| `!` | `modified` | Modified files (unstaged) |
-| `?` | `untracked` | Untracked files |
-
-`worktree.changes` also reports `renamed` and `deleted`, which have no dedicated symbol in the column.
-
-### Worktree
-
-An in-progress git operation, a worktree-location attribute, or a branch with no worktree. One symbol shows, highest priority first (`✘ > ↻ > ⊟ > ⊞ > ⊘ > ⚐ > /`):
-
-| Symbol | JSON | Meaning |
-|--------|------|---------|
-| `✘` | `worktree.changes.conflicted` | Merge conflicts |
-| `↻` | `worktree.operation` `"rebase"`, `"merge"`, `"cherry_pick"`, `"revert"`, `"bisect"` | A git operation is in progress; `git status` names it |
-| `⊟` | `worktree.prunable` | Prunable (worktree directory or its `.git` gone) |
-| `⊞` | `worktree.locked` | Locked worktree |
-| `⊘` | `worktree.detached` | Detached HEAD |
-| `⚐` | `worktree.duplicate_branch` | Branch checked out in more than one worktree |
-| `⚐` | `worktree.branch_mismatch` | Worktree isn't at the path its branch implies |
-| `/` | no `worktree` object | Branch without a worktree |
-
-### Default branch
-
-The single highest-priority state describing the branch's relation to the default branch; blank when none applies (a normal up-to-date branch). Each symbol is one `display.state` value:
-
-| Symbol | display.state | Meaning |
-|--------|---------------|---------|
-| `^` | `"is_main"` | The primary worktree (the repo's home worktree) |
-| `∅` | `"orphan"` | No common ancestor with the default branch |
-| `_` | `"empty"` | Same commit as the default branch, working tree clean — safe to remove; row dimmed |
-| `⊂` | `"integrated"` | Content [integrated](/remove/#branch-cleanup) into the default branch or merge target via different history; the matching check is in `default_branch.integration.reason`; row dimmed |
-| `✗` | `"would_conflict"` | Merging into the default branch would conflict (simulated with `git merge-tree`) and the branch isn't already integrated; with `--full`, the check includes tracked uncommitted changes |
-| `–` | `"same_commit"` | Same commit as the default branch, but with uncommitted changes |
-| `↕` | `"diverged"` | Both ahead of and behind the default branch |
-| `↑` | `"ahead"` | Has commits the default branch doesn't |
-| `↓` | `"behind"` | Missing commits the default branch has |
-
-Rows are dimmed when [safe to delete](/remove/#branch-cleanup) — `_` (`"empty"`) or `⊂` (`"integrated"`).
-
-### Remote
-
-Relation to the tracking branch, derived from the `upstream.ahead` / `upstream.behind` counts; blank when there is no upstream:
-
-| Symbol | upstream | Meaning |
-|--------|----------|---------|
-| `\|` | `ahead` 0, `behind` 0 | In sync with remote |
-| `⇡` | `ahead` > 0 | Ahead of remote |
-| `⇣` | `behind` > 0 | Behind remote |
-| `⇅` | `ahead` > 0, `behind` > 0 | Diverged from remote |
-
-### Marker
-
-The last subcolumn shows the branch's marker, set with
-[`wt config state marker set`](/config/#wt-config-state-marker) — usually an
-emoji saying what the branch is for. It reads back as the item's `marker`
-field.
-
-### Placeholder symbols
-
-These appear across all columns while the table is loading:
-
-| Symbol | Meaning |
-|--------|---------|
-| `·` | Data is loading, or collection timed out |
+`wt config --help` covers their templates, widths, and drop priority under [Custom columns](/config/#custom-columns).
 
 ---
 
@@ -1057,6 +1015,37 @@ How "no value" reads:
 jq treats absent and `null` identically in path expressions, so filters need
 no null checks; `has()` distinguishes the two when it matters.
 
+Examples:
+
+```console
+# Current worktree path (for scripts)
+$ wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'
+
+# Branches with uncommitted changes
+$ wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'
+
+# Worktrees with merge conflicts
+$ wt list --format=json | jq '.items[] | select(.worktree.changes.conflicted)'
+
+# Branches ahead of main (needs merging)
+$ wt list --format=json | jq '.items[] | select(.default_branch.ahead > 0) | .branch'
+
+# Integrated branches (safe to remove)
+$ wt list --format=json | jq '.items[] | select(.display.state == "integrated" or .display.state == "empty") | .branch'
+
+# Branches without worktrees
+$ wt list --format=json --branches | jq '.items[] | select(.worktree == null) | .branch'
+
+# Worktrees ahead of upstream (needs pushing)
+$ wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | {branch, ahead: .upstream.ahead}'
+
+# Stale CI (local changes not reflected in CI)
+$ wt list --format=json --full | jq '.items[] | select(.checks.stale) | .branch'
+```
+
+Field reference: https://worktrunk.dev/list/#json-output — JSON Schema: https://worktrunk.dev/schema/list-v2.json
+
+<!-- site-only -->
 Envelope fields:
 
 | Field | Type | Description |
@@ -1205,7 +1194,19 @@ Presentation only — every value here renders facts that appear elsewhere in th
 
 ### state values
 
-The single highest-priority state describing the branch's relation to the default branch; absent when none applies (a normal up-to-date branch). Each value is one Default-branch symbol — see [Default branch](#default-branch) for the symbol and the full meaning of each value (`"is_main"`, `"orphan"`, `"empty"`, `"integrated"`, `"would_conflict"`, `"same_commit"`, `"diverged"`, `"ahead"`, `"behind"`).
+`display.state` is the Default branch symbol, as a string:
+
+| Value | Symbol |
+|-------|--------|
+| `"is_main"` | `^` |
+| `"orphan"` | `∅` |
+| `"empty"` | `_` |
+| `"integrated"` | `⊂` (which check matched is in `default_branch.integration.reason`) |
+| `"would_conflict"` | `✗` |
+| `"same_commit"` | `–` |
+| `"diverged"` | `↕` |
+| `"ahead"` | `↑` |
+| `"behind"` | `↓` |
 
 ### integration reasons
 
@@ -1223,35 +1224,6 @@ The single highest-priority state describing the branch's relation to the defaul
 ### review states
 
 `pr.review` is one of `"changes_requested"`, `"pending"`, `"draft"`, `"approved"`, absent when the forge reports no review signal. [CI status](#ci-status) shows how each renders. The vocabulary matches Claude Code's statusline `pr.review_state` field.
-
-```console
-# Current worktree path (for scripts)
-$ wt list --format=json | jq -r '.items[] | select(.worktree.current) | .worktree.path'
-
-# Branches with uncommitted changes
-$ wt list --format=json | jq '.items[] | select(.worktree.changes.modified)'
-
-# Worktrees with merge conflicts
-$ wt list --format=json | jq '.items[] | select(.worktree.changes.conflicted)'
-
-# Branches ahead of main (needs merging)
-$ wt list --format=json | jq '.items[] | select(.default_branch.ahead > 0) | .branch'
-
-# Integrated branches (safe to remove)
-$ wt list --format=json | jq '.items[] | select(.display.state == "integrated" or .display.state == "empty") | .branch'
-
-# Branches without worktrees
-$ wt list --format=json --branches | jq '.items[] | select(.worktree == null) | .branch'
-
-# Worktrees ahead of upstream (needs pushing)
-$ wt list --format=json | jq '.items[] | select(.upstream.ahead > 0) | {branch, ahead: .upstream.ahead}'
-
-# Stale CI (local changes not reflected in CI)
-$ wt list --format=json --full | jq '.items[] | select(.checks.stale) | .branch'
-```
-
-A JSON Schema for the envelope is published at
-[worktrunk.dev/schema/list-v2.json](https://worktrunk.dev/schema/list-v2.json).
 
 ### Schema 1
 
@@ -1287,6 +1259,7 @@ The original bare-array format — one object per row, no envelope — selected 
 
 The envelope's `repo.default_branch` and `collected` have no schema-1 equivalent, and schema 2 separates "nothing to report" from "not determined" — see [How "no value" reads](#schema-2).
 
+<!-- /site-only -->
 Missing a field that would be generally useful? Open an issue at https://github.com/max-sixty/worktrunk.
 
 ## See also

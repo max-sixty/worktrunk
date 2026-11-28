@@ -97,6 +97,12 @@ fn render_markdown(help: &str, width: Option<usize>, code_blocks: CodeBlocks) ->
             if inner.starts_with("wt list") {
                 chop_next_block = true;
             }
+            // PROTOTYPE: a site-only region renders on the web page, not in the terminal.
+            if inner == "site-only" {
+                while i < lines.len() && lines[i].trim() != "<!-- /site-only -->" {
+                    i += 1;
+                }
+            }
             i += 1;
             continue;
         }
