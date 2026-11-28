@@ -1533,12 +1533,13 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
     other.create_branch("only-in-selected-repo");
     repo.create_branch("only-in-original-repo");
     let path = other.root_path().to_str().unwrap();
+    let trace = other.root_path().join(".git/wt/logs/trace.log");
     for args in [
         vec!["wt", "-C", path, "switch", ""],
         vec!["wt", "switch", "-C", path, ""],
     ] {
         // Each form must write its own trace, not pass on the previous one's.
-        let _ = std::fs::remove_dir_all(other.root_path().join(".git/wt/logs"));
+        assert!(!trace.exists());
         let output = repo
             .completion_cmd(&args)
             .env("WORKTRUNK_VERBOSE", "2")
@@ -1548,8 +1549,9 @@ fn test_completion_respects_directory_option(repo: TestRepo) {
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("only-in-selected-repo"), "{stdout}");
         assert!(!stdout.contains("only-in-original-repo"), "{stdout}");
-        assert!(other.root_path().join(".git/wt/logs/trace.log").exists());
+        assert!(trace.exists());
         assert!(!repo.root_path().join(".git/wt/logs/trace.log").exists());
+        std::fs::remove_file(&trace).unwrap();
     }
 }
 
