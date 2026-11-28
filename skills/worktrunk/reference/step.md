@@ -491,6 +491,12 @@ $ wt step copy-ignored --require-include
 
 Without `.worktreeinclude`, the command is a no-op (it reports that nothing was copied and why). With the file present, only matching files copy as above. To apply this across every repository, put the flag in a user-config hook: `post-start = "wt step copy-ignored --require-include"`.
 
+To read the patterns from another file, pass `--include-file`. A relative path resolves against the source worktree, and the file replaces `.worktreeinclude` for that run, with the same syntax. Its patterns are anchored at the worktree root, as in `.worktreeinclude`, not at the file's own directory. A missing named file is an error, unless `--require-include` is also passed, in which case nothing copies. Claude Code also reads `.worktreeinclude` and copies matches in full, so large caches that should only be reflinked can go in a separate file:
+
+```console
+$ wt step copy-ignored --include-file .config/worktree-caches --require-include
+```
+
 ### Common patterns
 
 | Type | Patterns |
@@ -571,7 +577,13 @@ Options:
           Overwrite existing files in destination
 
       --require-include
-          Require .worktreeinclude to copy anything
+          Require the include file (.worktreeinclude by default) to copy anything
+
+      --include-file <PATH>
+          Read include patterns from this file instead of .worktreeinclude
+
+          Relative to the source worktree. A missing file is an error unless --require-include is
+          also passed.
 
   -h, --help
           Print help (see a summary with '-h')

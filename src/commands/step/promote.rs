@@ -387,10 +387,16 @@ pub fn handle_promote(branch: Option<&str>) -> anyhow::Result<PromoteResult> {
     // to the current branch and will change after `git switch`.
     let worktree_paths: Vec<PathBuf> = worktrees.iter().map(|wt| wt.path.clone()).collect();
     let no_excludes: &[String] = &[];
-    let main_entries =
-        list_and_filter_ignored_entries(main_path, &main_branch, &worktree_paths, no_excludes)?;
+    let main_entries = list_and_filter_ignored_entries(
+        main_path,
+        &main_path.join(".worktreeinclude"),
+        &main_branch,
+        &worktree_paths,
+        no_excludes,
+    )?;
     let target_entries = list_and_filter_ignored_entries(
         &target_path,
+        &target_path.join(".worktreeinclude"),
         &target_branch,
         &worktree_paths,
         no_excludes,

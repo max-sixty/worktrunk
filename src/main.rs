@@ -327,6 +327,7 @@ fn handle_step_command(
             dry_run,
             force,
             require_include,
+            include_file,
             format,
         } => step_copy_ignored(
             from.as_deref(),
@@ -334,6 +335,7 @@ fn handle_step_command(
             dry_run,
             force,
             require_include,
+            include_file.as_deref(),
             format,
         ),
         StepCommand::Eval { template, format } => step_eval(&template, format),

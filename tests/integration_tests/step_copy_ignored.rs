@@ -2287,6 +2287,84 @@ fn test_copy_ignored_require_include_empty_worktreeinclude(mut repo: TestRepo) {
     );
 }
 
+// ============================================================================
+// --include-file flag
+// ============================================================================
+
+/// Two gitignored files, `.worktreeinclude` selecting `.env`, and
+/// `.config/caches` selecting `cache.db`.
+fn setup_include_file_fixture(repo: &mut TestRepo) -> PathBuf {
+    let feature_path = repo.add_worktree("feature");
+    fs::write(repo.root_path().join(".env"), "SECRET=value").unwrap();
+    fs::write(repo.root_path().join("cache.db"), "cached data").unwrap();
+    fs::write(repo.root_path().join(".gitignore"), ".env\ncache.db\n").unwrap();
+    fs::write(repo.root_path().join(".worktreeinclude"), ".env\n").unwrap();
+    fs::create_dir_all(repo.root_path().join(".config")).unwrap();
+    fs::write(repo.root_path().join(".config/caches"), "cache.db\n").unwrap();
+    feature_path
+}
+
+/// The named file selects in place of `.worktreeinclude`, resolved against
+/// the source worktree while the command runs in the destination.
+#[rstest]
+fn test_copy_ignored_include_file_replaces_worktreeinclude(mut repo: TestRepo) {
+    let feature_path = setup_include_file_fixture(&mut repo);
+
+    let output = repo
+        .wt_command()
+        .args(["step", "copy-ignored", "--include-file", ".config/caches"])
+        .current_dir(&feature_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "copy-ignored should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(feature_path.join("cache.db").exists());
+    assert!(
+        !feature_path.join(".env").exists(),
+        ".worktreeinclude is not read when --include-file is given"
+    );
+}
+
+/// A named file that doesn't exist is an error rather than a fallback to
+/// copying everything gitignored.
+#[rstest]
+fn test_copy_ignored_include_file_missing_fails(mut repo: TestRepo) {
+    let feature_path = setup_include_file_fixture(&mut repo);
+
+    assert_cmd_snapshot!(snapshot_cmd(
+        &repo,
+        "step",
+        &["copy-ignored", "--include-file", "missing"],
+        Some(&feature_path),
+    ));
+    assert!(!feature_path.join(".env").exists());
+    assert!(!feature_path.join("cache.db").exists());
+}
+
+/// With `--require-include`, a missing named file copies nothing, and the
+/// message names that file.
+#[rstest]
+fn test_copy_ignored_include_file_missing_require_include(mut repo: TestRepo) {
+    let feature_path = setup_include_file_fixture(&mut repo);
+
+    assert_cmd_snapshot!(snapshot_cmd(
+        &repo,
+        "step",
+        &[
+            "copy-ignored",
+            "--include-file",
+            "missing",
+            "--require-include"
+        ],
+        Some(&feature_path),
+    ));
+    assert!(!feature_path.join(".env").exists());
+    assert!(!feature_path.join("cache.db").exists());
+}
+
 /// Inside a background hook pipeline, copy-ignored lowers its own priority.
 /// The helper it spawns for that goes through `shell_exec::Cmd`, so it shows
 /// up in the `-vv` trace like every other subprocess.
