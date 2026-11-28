@@ -156,15 +156,10 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# [commit.generation][0m
 [107m [0m [2m# command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"[0m
 [107m [0m [2m#[0m
-[107m [0m [2m# ### llm[0m
+[107m [0m [2m# ### Pi[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "llm -m claude-haiku-4.5"[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# ### aichat[0m
-[107m [0m [2m#[0m
-[107m [0m [2m# [commit.generation][0m
-[107m [0m [2m# command = "aichat -m claude:claude-haiku-4.5 --code"[0m
+[107m [0m [2m# command = "pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.[0m
 [107m [0m [2m#[0m
@@ -274,7 +269,7 @@ Creates [2m~/.config/worktrunk/config.toml[0m with the following content:
 [107m [0m [2m# commit = true      # Commit uncommitted changes first (--no-commit to skip)[0m
 [107m [0m [2m# rebase = true      # Rebase onto target before merge (--no-rebase to skip)[0m
 [107m [0m [2m# remove = true      # Remove worktree after merge (--no-remove to keep)[0m
-[107m [0m [2m# verify = true      # Run project hooks (--no-hooks to skip)[0m
+[107m [0m [2m# verify = true      # Run hooks (--no-hooks to skip)[0m
 [107m [0m [2m# ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)[0m
 [107m [0m [2m#[0m
 [107m [0m [2m# ### Remove[0m

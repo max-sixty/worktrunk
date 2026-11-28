@@ -25,7 +25,7 @@
 //! (`handle_cache_get`) and dropped by `wt config state cache clear`
 //! (`handle_cache_clear`), which needs no prompt:
 //!
-//! - Previous branch (git config `worktrunk.history`, with `worktrunk.history-path`)
+//! - Previous branch (`.git/wt/switch-history.json`)
 //! - CI status cache (`.git/wt/cache/ci-status/`, plus the PR-number width
 //!   ratchet in `.git/wt/cache/pr-number/`)
 //! - Summary cache (`.git/wt/cache/summary/`)
@@ -33,6 +33,7 @@
 //!   — one user-facing category covering every SHA-keyed disk cache, even
 //!   when implementation lives in different modules (`sha_cache` for parsed
 //!   results, `commands::picker::preview_cache` for rendered previews)
+//! - Status explanations (`.git/wt/cache/status-explanations/shown.json`)
 //! - Hints (git config `worktrunk.hints.*`)
 //!
 //! Each category has a `clear_*_reported` helper that clears it and prints its
@@ -92,6 +93,7 @@ use crate::output::prompt::{PromptResponse, prompt_yes_no_preview};
 use worktrunk::utils::epoch_now;
 
 use super::super::list::ci_status::{CachedCiStatus, CiBranchName, MaxPrNumber};
+use super::super::list::{ShownExplanations, status_explanations_path};
 use crate::display::format_relative_time_short;
 use crate::help_pager::show_help_in_pager;
 use crate::summary::CachedSummary;
@@ -1099,6 +1101,7 @@ pub fn handle_state_clear_all(yes: bool) -> anyhow::Result<()> {
     cleared_any |= clear_ci_status_reported(&repo)?;
     cleared_any |= clear_summary_reported(&repo)?;
     cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_status_explanations_reported(&repo)?;
     cleared_any |= clear_vars_reported(&repo)?;
     cleared_any |= clear_logs_reported(&repo)?;
     cleared_any |= clear_hints_reported(&repo)?;
@@ -1125,6 +1128,7 @@ pub fn handle_cache_clear() -> anyhow::Result<()> {
     cleared_any |= clear_ci_status_reported(&repo)?;
     cleared_any |= clear_summary_reported(&repo)?;
     cleared_any |= clear_git_commands_reported(&repo)?;
+    cleared_any |= clear_status_explanations_reported(&repo)?;
     cleared_any |= clear_hints_reported(&repo)?;
 
     if !cleared_any {
@@ -1205,6 +1209,16 @@ fn clear_git_commands_reported(repo: &Repository) -> anyhow::Result<bool> {
         sha_cache::clear_all(repo)? + preview_cache::clear_all(repo)?,
         "git commands cache entry",
         "git commands cache entries",
+    ))
+}
+
+fn clear_status_explanations_reported(repo: &Repository) -> anyhow::Result<bool> {
+    Ok(report_cleared_count(
+        usize::from(worktrunk::cache::clear_one(&status_explanations_path(
+            repo,
+        ))?),
+        "status explanation cache entry",
+        "status explanation cache entries",
     ))
 }
 
@@ -1320,7 +1334,7 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         })
         .collect();
 
-    let output = serde_json::json!({
+    let mut output = serde_json::json!({
         "default_branch": default_branch,
         "remote_head_branch": remote_head_branch,
         "previous_branch": previous_branch,
@@ -1336,6 +1350,9 @@ fn handle_state_show_json(repo: &Repository) -> anyhow::Result<()> {
         "hints": hints,
         "trash": trash,
     });
+    if let Some(shown) = status_explanations(repo) {
+        output["status_explanations"] = serde_json::json!(shown);
+    }
 
     print_json(&output)?;
     Ok(())
@@ -1430,6 +1447,7 @@ fn handle_state_show_table(repo: &Repository) -> anyhow::Result<()> {
     // Show git commands cache summary
     render_git_commands_section(&mut out, repo)?;
     writeln!(out)?;
+    render_status_explanations_section(&mut out, repo)?;
 
     // Show hints
     render_hints_section(&mut out, repo)?;
@@ -1499,6 +1517,7 @@ fn handle_cache_get_table(repo: &Repository) -> anyhow::Result<()> {
     writeln!(out)?;
     render_git_commands_section(&mut out, repo)?;
     writeln!(out)?;
+    render_status_explanations_section(&mut out, repo)?;
     render_hints_section(&mut out, repo)?;
 
     show_help_in_pager(&out, true)?;
@@ -1507,7 +1526,7 @@ fn handle_cache_get_table(repo: &Repository) -> anyhow::Result<()> {
 }
 
 fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
-    let output = serde_json::json!({
+    let mut output = serde_json::json!({
         "previous_branch": repo.switch_previous(),
         "ci_status": ci_status_json(repo),
         "max_pr_number": MaxPrNumber::read(repo),
@@ -1515,6 +1534,9 @@ fn handle_cache_get_json(repo: &Repository) -> anyhow::Result<()> {
         "git_commands_cache": sha_cache::count_all(repo) + preview_cache::count_all(repo),
         "hints": repo.list_shown_hints(),
     });
+    if let Some(shown) = status_explanations(repo) {
+        output["status_explanations"] = serde_json::json!(shown);
+    }
 
     print_json(&output)?;
     Ok(())
@@ -1612,6 +1634,29 @@ fn render_git_commands_section(out: &mut String, repo: &Repository) -> anyhow::R
             "{}",
             format_with_gutter(&format!("{cache_count} {label}"), None)
         )?;
+    }
+    Ok(())
+}
+
+fn status_explanations(repo: &Repository) -> Option<ShownExplanations> {
+    worktrunk::cache::read_json(&status_explanations_path(repo))
+}
+
+fn render_status_explanations_section(out: &mut String, repo: &Repository) -> anyhow::Result<()> {
+    if let Some(shown) = status_explanations(repo) {
+        writeln!(out, "{}", format_heading("STATUS EXPLANATIONS", None))?;
+        let count = shown.len();
+        let label = if count == 1 {
+            "explanation"
+        } else {
+            "explanations"
+        };
+        writeln!(
+            out,
+            "{}",
+            format_with_gutter(&format!("{count} {label} shown"), None)
+        )?;
+        writeln!(out)?;
     }
     Ok(())
 }

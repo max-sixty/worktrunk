@@ -77,15 +77,10 @@
 # [commit.generation]
 # command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 #
-# ### llm
+# ### Pi
 #
 # [commit.generation]
-# command = "llm -m claude-haiku-4.5"
-#
-# ### aichat
-#
-# [commit.generation]
-# command = "aichat -m claude:claude-haiku-4.5 --code"
+# command = "pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"
 #
 # See LLM commits docs (https://worktrunk.dev/llm-commits/) for setup and Custom prompt templates (#custom-prompt-templates) for template customization.
 #
@@ -195,7 +190,7 @@
 # commit = true      # Commit uncommitted changes first (--no-commit to skip)
 # rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 # remove = true      # Remove worktree after merge (--no-remove to keep)
-# verify = true      # Run project hooks (--no-hooks to skip)
+# verify = true      # Run hooks (--no-hooks to skip)
 # ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 #
 # ### Remove

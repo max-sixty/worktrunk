@@ -586,7 +586,7 @@ fn load_config_file(
 ///
 /// # Commit generation configuration
 /// [commit.generation]
-/// command = "llm -m claude-haiku-4.5"  # Shell command for generating commit messages
+/// command = "MAX_THINKING_TOKENS=0 claude -p --model=haiku"  # Shell command for generating commit messages
 ///
 /// # Per-project configuration
 /// [projects."github.com/user/repo"]

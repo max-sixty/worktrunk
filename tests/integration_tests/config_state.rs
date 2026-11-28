@@ -1451,10 +1451,7 @@ fn test_state_clear_all_empty(repo: TestRepo) {
 fn test_state_clear_all_comprehensive(repo: TestRepo) {
     // Set up various state
     // Previous branch
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     // Marker (using JSON format)
     repo.set_marker("main", "🚧");
@@ -1503,15 +1500,7 @@ fn test_state_clear_all_comprehensive(repo: TestRepo) {
     ");
 
     // Verify everything was cleared
-    assert!(
-        repo.git_command()
-            .args(["config", "--get", "worktrunk.history"])
-            .run()
-            .unwrap()
-            .status
-            .code()
-            == Some(1)
-    ); // Not found
+    assert_eq!(repo.switch_previous(), None);
     assert!(
         repo.git_command()
             .args(["config", "--get", "worktrunk.state.main.marker"])
@@ -1603,10 +1592,7 @@ fn clear_all_with_stdin(repo: &TestRepo, input: &str) -> std::process::Output {
 /// nothing is cleared.
 #[rstest]
 fn test_state_clear_all_prompt_declines(repo: TestRepo) {
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     let mut cmd = repo.wt_command();
     cmd.args(["config", "state", "clear"]);
@@ -1616,23 +1602,13 @@ fn test_state_clear_all_prompt_declines(repo: TestRepo) {
     assert_snapshot!(String::from_utf8_lossy(&output.stderr), @"[36m❯[39m Clear all stored state, including branch markers and vars? [1m[y/N/?][22m [2m○[22m Clear cancelled");
 
     // Previous branch must survive the declined prompt.
-    assert!(
-        repo.git_command()
-            .args(["config", "--get", "worktrunk.history"])
-            .run()
-            .unwrap()
-            .status
-            .success()
-    );
+    assert_eq!(repo.switch_previous().as_deref(), Some("feature"));
 }
 
 /// Answering `y` at the prompt clears everything (covers the accepted branch).
 #[rstest]
 fn test_state_clear_all_prompt_accepts(repo: TestRepo) {
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     let output = clear_all_with_stdin(&repo, "y\n");
     assert!(output.status.success());
@@ -1641,14 +1617,9 @@ fn test_state_clear_all_prompt_accepts(repo: TestRepo) {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        !repo
-            .git_command()
-            .args(["config", "--get", "worktrunk.history"])
-            .run()
-            .unwrap()
-            .status
-            .success(),
+    assert_eq!(
+        repo.switch_previous(),
+        None,
         "previous branch should be cleared after accepting"
     );
 }
@@ -1755,10 +1726,7 @@ fn test_state_cache_pr_number_ratchet(repo: TestRepo) {
 #[rstest]
 fn test_state_cache_clear_with_entries(repo: TestRepo) {
     // Seed every regenerable cache category.
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
     write_ci_cache(
         &repo,
         "feature",
@@ -1794,23 +1762,15 @@ fn test_state_cache_clear_preserves_authoritative(repo: TestRepo) {
         .args(["config", "worktrunk.state.main.vars.env", "staging"])
         .run()
         .unwrap();
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     let output = wt_state_cmd(&repo, "cache", "clear", &[]).output().unwrap();
     assert!(output.status.success());
 
     // Regenerable: previous branch is cleared.
-    assert!(
-        !repo
-            .git_command()
-            .args(["config", "--get", "worktrunk.history"])
-            .run()
-            .unwrap()
-            .status
-            .success(),
+    assert_eq!(
+        repo.switch_previous(),
+        None,
         "previous branch (cache) should be cleared"
     );
     // Authoritative: marker and var survive.
@@ -1987,10 +1947,7 @@ fn test_state_get_comprehensive(repo: TestRepo) {
         .unwrap();
 
     // Set up previous branch
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     // Set up branch markers (JSON format with timestamps for deterministic age)
     repo.git_command()
@@ -2104,10 +2061,7 @@ fn test_state_get_json_comprehensive(repo: TestRepo) {
         .unwrap();
 
     // Set up previous branch
-    repo.git_command()
-        .args(["config", "worktrunk.history", "feature"])
-        .run()
-        .unwrap();
+    repo.set_switch_previous("feature");
 
     // Set up branch markers (JSON format with timestamps)
     repo.git_command()

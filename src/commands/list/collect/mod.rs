@@ -502,6 +502,7 @@ struct TableRenderPlan {
     header: String,
     rows: Vec<String>,
     summary: String,
+    shown_explanations: Option<(std::path::PathBuf, super::ShownExplanations)>,
 }
 
 impl TableRenderPlan {
@@ -519,6 +520,9 @@ impl TableRenderPlan {
             table.finalize(self.rows, self.summary)?;
         } else {
             print_buffered_table(&self.header, &self.rows, &self.summary);
+        }
+        if let Some((path, shown)) = self.shown_explanations {
+            worktrunk::cache::write_json(&path, &shown);
         }
         Ok(false)
     }
@@ -1549,7 +1553,8 @@ pub fn collect(
 
     // Single-line invariant: with no detectable width, an unlimited width
     // keeps rows untruncated rather than wrapping at a guessed width
-    let max_width = terminal_width().unwrap_or(usize::MAX);
+    let width = terminal_width();
+    let max_width = width.unwrap_or(usize::MAX);
 
     // Create collection options from the planned task set. `integration_targets`
     // is patched in after the parallel phase below extracts it — at this
@@ -2147,20 +2152,38 @@ pub fn collect(
 
     let timed_out_count = errors.iter().filter(|e| e.is_timeout()).count();
 
-    let table_render = render_table.then(|| TableRenderPlan {
-        progressive_table,
-        header: layout.format_header_line(),
-        rows: all_items
-            .iter()
-            .map(|item| layout.format_list_item_line(item, placeholder))
-            .collect(),
-        summary: super::format_summary_message(
+    let table_render = render_table.then(|| {
+        let cache_path = (width.is_some()
+            && layout
+                .columns
+                .iter()
+                .any(|column| column.kind == super::columns::ColumnKind::Status))
+        .then(|| super::status_explanations_path(repo));
+        let previous: super::ShownExplanations = cache_path
+            .as_deref()
+            .and_then(worktrunk::cache::read_json)
+            .unwrap_or_default();
+        let mut shown = previous.clone();
+        let summary = super::format_summary_message(
             &all_items,
             show_branches || show_remotes,
             &layout.hidden_columns,
             timed_out_count,
-            None,
-        ),
+            cache_path.as_ref().map(|_| &mut shown),
+            width,
+        );
+        TableRenderPlan {
+            progressive_table,
+            header: layout.format_header_line(),
+            rows: all_items
+                .iter()
+                .map(|item| layout.format_list_item_line(item, placeholder))
+                .collect(),
+            summary,
+            shown_explanations: cache_path
+                .filter(|_| previous != shown)
+                .map(|path| (path, shown)),
+        }
     });
 
     if let Some(table_render) = table_render

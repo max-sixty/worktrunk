@@ -52,7 +52,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
-- Declining skips every project command for that operation — including any already approved — and continues without them; saved approvals are unaffected
+- Declining skips every hook for that operation — user hooks and already-approved project commands included — and continues without them; saved approvals are unaffected
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks — accepted by the commands that run them (`wt switch`, `wt merge`, `wt remove`, `wt step commit`, `wt step squash`), not by `wt hook`
 
@@ -152,9 +152,9 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | Operation | Bare vars | `base` | `target` |
 |-----------|-----------|--------|----------|
 | switch/create | destination | where you came from | = bare vars |
-| commit (during merge/squash) | worktree being squashed | = bare vars | integration target |
-| merge | feature being merged | = bare vars | merge target |
-| remove | branch being removed | = bare vars | where you end up |
+| commit (during merge/squash) | worktree being squashed | unset | integration target |
+| merge | feature being merged | unset | merge target |
+| remove | branch being removed | unset | where you end up |
 
 All hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`.
 

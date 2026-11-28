@@ -2,6 +2,7 @@ use crate::common::{
     TestRepo, canonical_temp_home, repo, set_temp_home_env, set_xdg_config_path,
     setup_home_snapshot_settings, temp_home, wt_command,
 };
+use ansi_str::AnsiStr;
 use insta_cmd::assert_cmd_snapshot;
 use rstest::rstest;
 use std::fs;
@@ -3314,8 +3315,9 @@ fn test_nushell_auto_detection_creates_vendor_autoload(repo: TestRepo, temp_home
         "Nushell should be auto-configured when detected:\n{}",
         stderr
     );
+    // The shell name is underlined, so match on the ANSI-stripped text.
     assert!(
-        !stderr.contains("Skipped nu"),
+        !stderr.ansi_strip().contains("Skipped nu"),
         "Nushell should not be skipped when detected:\n{}",
         stderr
     );

@@ -67,15 +67,29 @@ use crate::config::ProjectId;
 use crate::git::error::RefType;
 use crate::git::{legacy_project_identifier, url_path_segments_eq};
 
-/// The remote name and URL of a bulk-config `remote.<name>.url` entry whose
-/// last value is non-empty, or `None` for any other key.
+/// The URL git fetches from, given every value of a `remote.<name>.url` key
+/// in config order: the first value, or `None` when there is none.
+///
+/// A remote set up with `git remote set-url --add` has several values; git
+/// fetches from the first and pushes to all. An empty value clears the
+/// values before it, so only those after the last empty value count.
+fn first_remote_url(values: &[String]) -> Option<&str> {
+    let start = values
+        .iter()
+        .rposition(String::is_empty)
+        .map_or(0, |i| i + 1);
+    let url = values.get(start)?.trim();
+    (!url.is_empty()).then_some(url)
+}
+
+/// The remote name and URL of a bulk-config `remote.<name>.url` entry with a
+/// URL per [`first_remote_url`], or `None` for any other key.
 ///
 /// Remote names can contain dots (e.g., "my.remote"); the `.url` suffix is
 /// stripped from the right, so the last `.url` is always the suffix.
 fn remote_url_entry<'a>(key: &'a str, values: &'a [String]) -> Option<(&'a str, &'a str)> {
     let name = key.strip_prefix("remote.")?.strip_suffix(".url")?;
-    let url = values.last()?.trim();
-    (!url.is_empty()).then_some((name, url))
+    Some((name, first_remote_url(values)?))
 }
 
 impl Repository {
@@ -137,12 +151,16 @@ impl Repository {
     /// rewrites. Use [`effective_remote_url`](Self::effective_remote_url) when you
     /// need forge detection to work with `insteadOf` aliases.
     ///
+    /// A remote with several URLs reports the first, the one git fetches from.
+    ///
     /// Resolved from the bulk config map — O(1) once populated.
     pub fn remote_url(&self, remote: &str) -> Option<String> {
-        self.config_last(&format!("remote.{remote}.url"))
-            .ok()
-            .flatten()
-            .filter(|url| !url.is_empty())
+        let key = super::canonical_config_key(&format!("remote.{remote}.url"));
+        let guard = self.all_config().ok()?.read().unwrap();
+        guard
+            .get(&key)
+            .and_then(|values| first_remote_url(values))
+            .map(str::to_string)
     }
 
     /// Get the effective URL for a remote, with `url.insteadOf` rewrites applied.

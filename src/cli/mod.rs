@@ -815,7 +815,7 @@ $ wt list
 + fix-auth         ↕|                ↑2  ↓1   +25  -11     |     b772e68    5h  Add secure token s…
 + fix-typos        _|                                      |     41ee083    4d  Merge fix-auth: ha…
 
-○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path
+○ Showing 4 worktrees, 1 with changes, 2 ahead, hidden: Path  (↕ diverged from default)
 ```
 
 Include CI status and LLM summaries:
@@ -932,6 +932,8 @@ The [custom columns config](/config/#custom-columns) covers templates, widths, a
 ## Status symbols
 
 The Status column packs several subcolumns, left to right, each mapping to a schema-2 field in `--format=json` (schema 1 spells several of them differently — see [Schema 1](#schema-1)). Working-tree flags are independent and co-occur — any combination shows at once. The other subcolumns are mutually exclusive: each shows a single symbol, the highest-priority state in top-to-bottom table order, and is blank when nothing applies.
+
+When space permits, the footer rotates through visible status explanations.
 
 ### Working tree
 
@@ -1679,7 +1681,7 @@ Project commands require approval on first run:
 
 - Approvals are saved to `~/.config/worktrunk/approvals.toml`
 - If a command changes, new approval is required
-- Declining skips every project command for that operation — including any already approved — and continues without them; saved approvals are unaffected
+- Declining skips every hook for that operation — user hooks and already-approved project commands included — and continues without them; saved approvals are unaffected
 - Use `--yes` to bypass prompts — useful for CI and automation
 - Use `--no-hooks` to skip hooks — accepted by the commands that run them (`wt switch`, `wt merge`, `wt remove`, `wt step commit`, `wt step squash`), not by `wt hook`
 
@@ -1779,9 +1781,9 @@ Bare variables (`branch`, `worktree_path`, `commit`) refer to the branch the ope
 | Operation | Bare vars | `base` | `target` |
 |-----------|-----------|--------|----------|
 | switch/create | destination | where you came from | = bare vars |
-| commit (during merge/squash) | worktree being squashed | = bare vars | integration target |
-| merge | feature being merged | = bare vars | merge target |
-| remove | branch being removed | = bare vars | where you end up |
+| commit (during merge/squash) | worktree being squashed | unset | integration target |
+| merge | feature being merged | unset | merge target |
+| remove | branch being removed | unset | where you end up |
 
 All hooks share the same perspective — `{{ branch | hash_port }}` produces the same port in `post-start` and `post-remove`.
 
@@ -2162,18 +2164,11 @@ command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_
 command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 ```
 
-### llm
+### Pi
 
 ```toml
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
-```
-
-### aichat
-
-```toml
-[commit.generation]
-command = "aichat -m claude:claude-haiku-4.5 --code"
+command = "pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"
 ```
 
 See [LLM commits docs](/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -2293,7 +2288,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-hooks to skip)
+verify = true      # Run hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 

@@ -321,89 +321,105 @@ impl Repository {
     /// Record the worktree `wt switch` is leaving, so `wt switch -` can
     /// return to it.
     ///
-    /// The branch goes in `worktrunk.history` and the path in
-    /// `worktrunk.history-path`. The branch alone can't name a detached
-    /// worktree, or the second checkout of a branch checked out twice; the
-    /// path can. A detached worktree clears the branch, so the two keys always
-    /// describe the same worktree, which is what
+    /// The branch and path go in
+    /// [`switch_history_path`](Self::switch_history_path). The branch alone
+    /// can't name a detached worktree, or the second checkout of a branch
+    /// checked out twice; the path can. A detached worktree records no branch,
+    /// so both fields always describe the same worktree, which is what
     /// [`switch_previous_worktree`](Self::switch_previous_worktree) checks.
     ///
-    /// Each key is written only when its value changes: the keys live in the
-    /// repository's shared config, and a redundant write still takes
-    /// `config.lock`, failing a concurrent config writer in another worktree.
-    /// The comparison reads the shared config fresh rather than the
-    /// process-lifetime snapshot, which another `wt` may have outdated by
-    /// recording a different source since this process loaded it. A skipped
-    /// write still refreshes this instance's snapshot with the fresh value.
+    /// History lives in its own file rather than the repository's shared git
+    /// config: every config write takes `config.lock`, so switches in parallel
+    /// worktrees would fail concurrent config writers elsewhere. The file is
+    /// replaced atomically, without a lock; concurrent switches leave the last
+    /// writer's record, which is all a single-slot history can hold.
     pub fn record_switch_source(&self, path: &Path, branch: Option<&str>) -> anyhow::Result<()> {
-        let recorded = self.config_regexp_entries(r"^worktrunk\.history(-path)?$")?;
-        let recorded_value = |key: &str| {
-            recorded
-                .iter()
-                .rev()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.as_str())
-        };
-        let recorded_branch = recorded_value("worktrunk.history");
-        match branch {
-            Some(branch) if recorded_branch != Some(branch) => {
-                self.set_config_value("worktrunk.history", branch)?
-            }
-            None if recorded_branch.is_some() => {
-                self.unset_config("worktrunk.history")?;
-            }
-            _ => self.cache_config_value("worktrunk.history", branch),
-        }
-        let path = path.to_string_lossy();
-        if recorded_value("worktrunk.history-path") != Some(&*path) {
-            self.set_config_value("worktrunk.history-path", &path)?;
-        } else {
-            self.cache_config_value("worktrunk.history-path", Some(&path));
-        }
-        Ok(())
+        self.save_switch_history(&SwitchHistory {
+            branch: branch.map(str::to_owned),
+            path: Some(path.to_string_lossy().into_owned()),
+        })
     }
 
     /// Set the previous branch outright (`wt config state previous-branch
     /// set`), dropping the path a switch recorded alongside the old one.
     pub fn set_switch_previous(&self, branch: &str) -> anyhow::Result<()> {
-        self.set_config_value("worktrunk.history", branch)?;
-        self.unset_config("worktrunk.history-path")?;
-        Ok(())
+        self.save_switch_history(&SwitchHistory {
+            branch: Some(branch.to_owned()),
+            path: None,
+        })
     }
 
     /// Forget the previous worktree. Returns whether anything was recorded.
+    ///
+    /// Also unsets the `worktrunk.history` and `worktrunk.history-path` keys
+    /// older versions stored history in, which nothing else removes. Each is
+    /// checked in the config snapshot first: `git config --unset-all` takes
+    /// `config.lock` even for a missing key.
     pub fn clear_switch_previous(&self) -> anyhow::Result<bool> {
-        let branch = self.unset_config("worktrunk.history")?;
-        let path = self.unset_config("worktrunk.history-path")?;
-        Ok(branch || path)
+        let mut legacy = false;
+        for key in ["worktrunk.history", "worktrunk.history-path"] {
+            if self.config_last(key)?.is_some() {
+                legacy |= self.unset_config(key)?;
+            }
+        }
+        let file = self.switch_history_path();
+        let removed = match std::fs::remove_file(&file) {
+            Ok(()) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => {
+                return Err(e).with_context(|| {
+                    format!("Failed to remove {}", format_path_for_display(&file))
+                });
+            }
+        };
+        Ok(legacy || removed)
     }
 
     /// The worktree `wt switch` last left, while it is still registered and
     /// still holds the branch recorded with it.
     ///
     /// `None` sends `wt switch -` to [`switch_previous`](Self::switch_previous)
-    /// instead: the worktree is gone, its checkout changed since, or an older
-    /// wt recorded a different branch without a path. An older wt recording
-    /// the same branch leaves the stale path standing, which matters only for
-    /// a branch checked out twice.
+    /// instead: the worktree is gone, its checkout changed since, or the
+    /// history names a branch without a path.
     pub fn switch_previous_worktree(&self) -> anyhow::Result<Option<(PathBuf, Option<String>)>> {
-        let Some(path) = self.config_last("worktrunk.history-path")? else {
+        let history = self.load_switch_history()?;
+        let Some(path) = &history.path else {
             return Ok(None);
         };
-        let Some((path, branch)) = self.worktree_at_path(Path::new(&path))? else {
+        let Some((path, branch)) = self.worktree_at_path(Path::new(path))? else {
             return Ok(None);
         };
-        Ok((branch == self.switch_previous()).then_some((path, branch)))
+        Ok((branch.as_deref() == history.branch()).then_some((path, branch)))
     }
 
-    /// Get the previous branch from worktrunk.history for `wt switch -`.
+    /// The branch `wt switch` last left, for `wt switch -`.
     ///
     /// Returns the branch we came from, enabling ping-pong switching.
     pub fn switch_previous(&self) -> Option<String> {
-        self.config_last("worktrunk.history")
-            .ok()
-            .flatten()
-            .filter(|s| !s.is_empty())
+        self.load_switch_history().ok()?.branch().map(str::to_owned)
+    }
+
+    /// Read the switch history. A missing file means no history; so does an
+    /// unparsable one, which the next switch overwrites.
+    fn load_switch_history(&self) -> anyhow::Result<SwitchHistory> {
+        let file = self.switch_history_path();
+        match std::fs::read_to_string(&file) {
+            Ok(content) => Ok(serde_json::from_str(&content).unwrap_or_default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SwitchHistory::default()),
+            Err(e) => {
+                Err(e).with_context(|| format!("Failed to read {}", format_path_for_display(&file)))
+            }
+        }
+    }
+
+    fn save_switch_history(&self, history: &SwitchHistory) -> anyhow::Result<()> {
+        let file = self.switch_history_path();
+        let write = || -> std::io::Result<()> {
+            std::fs::create_dir_all(self.wt_dir())?;
+            let content = serde_json::to_string(history).map_err(std::io::Error::other)?;
+            crate::utils::write_atomically(&file, &content)
+        };
+        write().with_context(|| format!("Failed to write {}", format_path_for_display(&file)))
     }
 
     /// Check if a hint has been shown in this repo.
@@ -1135,6 +1151,22 @@ impl Repository {
     }
 }
 
+/// The worktree `wt switch` last left, as stored in
+/// [`Repository::switch_history_path`].
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct SwitchHistory {
+    /// `None` for a detached worktree, or a branch set without a switch.
+    branch: Option<String>,
+    /// `None` when the branch was set outright rather than recorded by a switch.
+    path: Option<String>,
+}
+
+impl SwitchHistory {
+    fn branch(&self) -> Option<&str> {
+        self.branch.as_deref().filter(|b| !b.is_empty())
+    }
+}
+
 /// Split a `worktrunk.state.<branch>.vars.<key>` config key into `(branch, key)`.
 ///
 /// Uses `rsplit_once`: var keys cannot contain dots (validated by
@@ -1164,91 +1196,65 @@ mod tests {
     use crate::testing::TestRepo;
 
     #[test]
-    fn test_record_switch_source_skips_unchanged_values() {
-        // A repeated switch from the same worktree must not rewrite the shared
-        // config: parallel worktrees contend for `config.lock`. A held lock
-        // makes any write fail, so success proves no write was attempted.
-        let test = TestRepo::with_initial_commit();
-        let repo = Repository::at(test.root_path()).unwrap();
-        let path = test.root_path().to_path_buf();
-        repo.record_switch_source(&path, Some("main")).unwrap();
-        let lock = repo.git_common_dir().join("config.lock");
-        std::fs::write(&lock, "").unwrap();
-        repo.record_switch_source(&path, Some("main")).unwrap();
-        // A changed value still writes, so it fails on the held lock.
-        assert!(repo.record_switch_source(&path, Some("other")).is_err());
-        std::fs::remove_file(&lock).unwrap();
-
-        // A detached source with no recorded branch skips the unset too.
-        let repo = Repository::at(test.root_path()).unwrap();
-        repo.record_switch_source(&path, None).unwrap();
-        std::fs::write(&lock, "").unwrap();
-        repo.record_switch_source(&path, None).unwrap();
-        std::fs::remove_file(&lock).unwrap();
-    }
-
-    #[test]
-    fn test_record_switch_source_compares_fresh_shared_config() {
-        // Another process can record a different source after this one loads
-        // its config snapshot; restoring the earlier source must still write.
+    fn test_switch_history_leaves_shared_config_alone() {
+        // Parallel worktrees contend for `config.lock`; recording history must
+        // neither take it nor change the shared config.
         let test = TestRepo::with_initial_commit();
         let path = test.root_path().to_path_buf();
-        let other = path.join("other");
         let first = Repository::at(test.root_path()).unwrap();
-        first.record_switch_source(&path, Some("a")).unwrap();
-        // Prime the first process's snapshot with source A.
-        assert_eq!(
-            first.config_value("worktrunk.history").unwrap().as_deref(),
-            Some("a")
-        );
+        let config = first.git_common_dir().join("config");
+        let before = std::fs::read(&config).unwrap();
+        let lock = first.git_common_dir().join("config.lock");
+        std::fs::write(&lock, "").unwrap();
 
+        first.record_switch_source(&path, Some("main")).unwrap();
+        // Another process reads what this one recorded.
         let second = Repository::at(test.root_path()).unwrap();
-        second.record_switch_source(&other, Some("b")).unwrap();
+        assert_eq!(second.switch_previous().as_deref(), Some("main"));
+        let (_, branch) = second.switch_previous_worktree().unwrap().unwrap();
+        assert_eq!(branch.as_deref(), Some("main"));
 
-        first.record_switch_source(&path, Some("a")).unwrap();
-        let fresh = Repository::at(test.root_path()).unwrap();
-        assert_eq!(
-            fresh.config_value("worktrunk.history").unwrap().as_deref(),
-            Some("a")
-        );
-        assert_eq!(
-            fresh
-                .config_value("worktrunk.history-path")
-                .unwrap()
-                .as_deref(),
-            Some(&*path.to_string_lossy())
-        );
-    }
-
-    #[test]
-    fn test_record_switch_source_noop_refreshes_own_snapshot() {
-        // When another process already recorded the same source, the write is
-        // skipped, but this instance's snapshot must still see that source.
-        let test = TestRepo::with_initial_commit();
-        let path = test.root_path().to_path_buf();
-        let other = path.join("other");
-        let first = Repository::at(test.root_path()).unwrap();
-        first.record_switch_source(&path, Some("a")).unwrap();
-        assert_eq!(first.switch_previous().as_deref(), Some("a"));
-
-        let second = Repository::at(test.root_path()).unwrap();
-        second.record_switch_source(&other, Some("b")).unwrap();
-
-        first.record_switch_source(&other, Some("b")).unwrap();
-        assert_eq!(first.switch_previous().as_deref(), Some("b"));
-        assert_eq!(
-            first
-                .config_value("worktrunk.history-path")
-                .unwrap()
-                .as_deref(),
-            Some(&*other.to_string_lossy())
-        );
-
-        // A detached source that another process already recorded clears this
-        // instance's cached branch too.
+        // A detached source records no branch.
         second.record_switch_source(&path, None).unwrap();
-        first.record_switch_source(&path, None).unwrap();
         assert_eq!(first.switch_previous(), None);
+
+        assert!(first.clear_switch_previous().unwrap());
+        assert!(!first.clear_switch_previous().unwrap());
+
+        std::fs::remove_file(&lock).unwrap();
+        assert_eq!(std::fs::read(&config).unwrap(), before);
+    }
+
+    #[test]
+    fn test_clear_switch_previous_drops_legacy_config_keys() {
+        // Keys an older wt left in the shared config are removed by a clear,
+        // and count as something cleared.
+        let test = TestRepo::with_initial_commit();
+        test.run_git(&["config", "worktrunk.history", "old"]);
+        test.run_git(&["config", "worktrunk.history-path", "/old"]);
+        let repo = Repository::at(test.root_path()).unwrap();
+        assert!(repo.clear_switch_previous().unwrap());
+        let fresh = Repository::at(test.root_path()).unwrap();
+        assert_eq!(fresh.config_value("worktrunk.history").unwrap(), None);
+        assert_eq!(fresh.config_value("worktrunk.history-path").unwrap(), None);
+        assert!(!fresh.clear_switch_previous().unwrap());
+    }
+
+    #[test]
+    fn test_switch_history_io_errors_surface() {
+        // A directory where the history file belongs can be neither read nor
+        // removed; both report the failure instead of treating it as empty.
+        let test = TestRepo::with_initial_commit();
+        let repo = Repository::at(test.root_path()).unwrap();
+        std::fs::create_dir_all(repo.switch_history_path()).unwrap();
+        assert!(repo.switch_previous_worktree().is_err());
+        assert_eq!(repo.switch_previous(), None);
+        assert!(
+            repo.clear_switch_previous()
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to remove")
+        );
     }
 
     #[test]
