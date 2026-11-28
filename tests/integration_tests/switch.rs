@@ -2437,7 +2437,7 @@ fn test_switch_previous_with_stale_history(repo: TestRepo) {
     // Now manually set history to simulate user changing worktrees without wt switch.
     // History stores just the previous branch (branch-a from the earlier switches).
     // If user manually cd'd to branch-c's worktree, history would still say branch-a.
-    repo.run_git(&["config", "worktrunk.history", "branch-a"]);
+    repo.set_switch_previous("branch-a");
 
     // Run wt switch - from branch-b's worktree.
     // Should go to branch-a (what history says), and record actual current branch as new previous.
@@ -9098,8 +9098,8 @@ fn test_switch_previous_falls_back_to_the_branch(mut repo: TestRepo) {
     repo.add_worktree("other");
 
     switch_json_path(&repo, &feature, &["main"]);
-    // An older wt switching from `other` writes only the branch.
-    repo.run_git(&["config", "worktrunk.history", "other"]);
+    // `previous-branch set other` records only the branch.
+    repo.set_switch_previous("other");
 
     let back = switch_json_path(&repo, repo.root_path(), &["-"]);
     assert_eq!(back.file_name(), repo.worktrees["other"].file_name());

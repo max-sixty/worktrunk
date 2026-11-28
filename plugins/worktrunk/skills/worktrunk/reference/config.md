@@ -158,18 +158,11 @@ command = "codex exec -m gpt-6-luna -c model_reasoning_effort='none' -c project_
 command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 ```
 
-### llm
+### Pi
 
 ```toml
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
-```
-
-### aichat
-
-```toml
-[commit.generation]
-command = "aichat -m claude:claude-haiku-4.5 --code"
+command = "pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"
 ```
 
 See [LLM commits docs](https://worktrunk.dev/llm-commits/) for setup and [Custom prompt templates](#custom-prompt-templates) for template customization.
@@ -289,7 +282,7 @@ squash = true      # Squash commits into one (--no-squash to preserve history)
 commit = true      # Commit uncommitted changes first (--no-commit to skip)
 rebase = true      # Rebase onto target before merge (--no-rebase to skip)
 remove = true      # Remove worktree after merge (--no-remove to keep)
-verify = true      # Run project hooks (--no-hooks to skip)
+verify = true      # Run hooks (--no-hooks to skip)
 ff = true          # Fast-forward merge (--no-ff to create a merge commit instead)
 ```
 
@@ -1231,6 +1224,7 @@ View or drop worktrunk's regenerable caches in one place. Everything here is reb
 - **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](https://worktrunk.dev/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
+- **Status explanations** — explanations shown in the current `wt list` footer rotation
 - **Hints** — one-time hints already shown in this repo
 - **Previous branch** — the `wt switch -` target, re-recorded on the next switch
 
@@ -1441,7 +1435,7 @@ $ wt list
 + review-ui      ? ↑ 💬    +1        ↑1        +1                a585d6e    1d  Add dashboard comp…
 + wip-docs       ? –       +1                                    33323bc    1d  Initial commit
 
-○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path
+○ Showing 4 worktrees, 2 with changes, 2 ahead, hidden: Path  (^ main worktree  ⇡ ahead of remote)
 ```
 
 ### Use cases

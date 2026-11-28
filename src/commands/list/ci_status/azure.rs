@@ -164,12 +164,23 @@ pub(super) fn detect_azure_pr(
     })
 }
 
+/// How many of a branch's newest runs [`detect_azure_pipeline`] fetches while
+/// looking for one from this repository.
+const AZURE_PIPELINE_RUN_WINDOW: &str = "20";
+
 /// Detect Azure Pipelines status for a branch (fallback when no PR exists).
 ///
-/// Uses `az pipelines runs list --branch <branch>` to get the most recent run.
-/// Note: `--top 1` returns the most recently queued run, which may be a retry
-/// from a different SHA than `local_head`; `is_stale` flags that case so the UI
-/// can dim the indicator rather than reporting fresh status against stale data.
+/// Uses `az pipelines runs list --branch <branch>` and reports the most recent
+/// run from this repository. That command has no repository filter, so the
+/// list spans every repository in the project and a sibling's same-named
+/// branch (`main`, most often) shows up in it. `--top` applies on the server,
+/// so the lookup fetches a window of runs and keeps the first whose
+/// `repository.name` matches; a window filled entirely by siblings' runs
+/// reports no CI rather than their verdict.
+///
+/// The run kept may be a retry from a different SHA than `local_head`;
+/// `is_stale` flags that case so the UI can dim the indicator rather than
+/// reporting fresh status against stale data.
 pub(super) fn detect_azure_pipeline(
     repo: &Repository,
     branch: &CiBranchName,
@@ -187,7 +198,7 @@ pub(super) fn detect_azure_pipeline(
             "--branch",
             &branch_ref,
             "--top",
-            "1",
+            AZURE_PIPELINE_RUN_WINDOW,
             "--project",
             &ctx.project,
             "--org",
@@ -217,7 +228,13 @@ pub(super) fn detect_azure_pipeline(
 
     let runs: Vec<AzPipelineRun> =
         parse_json(&output.stdout, "az pipelines runs list", &branch.full_name)?;
-    let run = runs.first()?;
+    // Azure DevOps repository names are case-insensitive, and the clone URL
+    // that `ctx.repository` comes from need not match the canonical casing.
+    let run = runs.iter().find(|run| {
+        run.repository
+            .as_ref()
+            .is_some_and(|r| r.name.eq_ignore_ascii_case(&ctx.repository))
+    })?;
 
     let ci_status = parse_azure_pipeline_status(run.status.as_deref(), run.result.as_deref());
 
@@ -340,6 +357,14 @@ struct AzPipelineRun {
     result: Option<String>,
     #[serde(default)]
     source_version: Option<String>,
+    /// Repository the run built; the run list spans the whole project.
+    #[serde(default)]
+    repository: Option<AzBuildRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AzBuildRepository {
+    name: String,
 }
 
 #[cfg(test)]

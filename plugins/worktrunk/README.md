@@ -26,7 +26,7 @@ The 🤖 and 💬 markers appear in `wt list` output, making it easy to see whic
 
 **Set up LLM commit message generation**
 
-The configuration skill guides through configuring an AI tool (Claude Code, Codex, llm, or aichat) and adding `[commit.generation]` to the user config so `wt merge` can auto-generate commit messages.
+The configuration skill guides through configuring an AI tool (Claude Code, Codex, OpenCode, or Pi) and adding `[commit.generation]` to the user config so `wt merge` can auto-generate commit messages.
 
 **Add pre-start hooks to run npm install automatically**
 

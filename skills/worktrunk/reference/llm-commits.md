@@ -30,17 +30,14 @@ Requires `jq` for JSON parsing. See [Codex CLI docs](https://developers.openai.c
 
 ### Other tools
 
-Any of these replaces the `command` line above:
+Either of these replaces the `command` line above:
 
 ```toml
-# opencode — use a fast model variant
+# OpenCode — use a fast model variant
 command = "opencode run -m anthropic/claude-haiku-5-5 --variant fast"
 
-# llm
-command = "llm -m claude-haiku-4.5"
-
-# aichat
-command = "aichat -m claude:claude-haiku-4.5 --code"
+# Pi — no session file, tools, extensions, or context files
+command = "pi -p --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-context-files --model anthropic/claude-haiku-5-5 --thinking off"
 ```
 
 ## Usage
@@ -131,7 +128,7 @@ Override the defaults with inline templates:
 ```toml
 # ~/.config/worktrunk/config.toml
 [commit.generation]
-command = "llm -m claude-haiku-4.5"
+command = "MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku --tools='' --safe-mode --setting-sources='user' --system-prompt=''"
 
 template = """
 Write a commit message for this diff. One line, under 50 chars.

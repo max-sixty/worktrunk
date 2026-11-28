@@ -151,7 +151,7 @@ use anstyle::Style;
 use model::{BranchScope, ItemKind, ListData, ListItem};
 use progressive::RenderTarget;
 use worktrunk::git::Repository;
-use worktrunk::styling::{INFO_SYMBOL, eprintln, terminal_width, wrap_styled_text};
+use worktrunk::styling::{INFO_SYMBOL, eprintln, visual_width, wrap_styled_text};
 
 use crate::output::print_json;
 
@@ -344,6 +344,53 @@ impl SummaryMetrics {
     }
 }
 
+/// One cache file shared by all worktrees of the repository.
+pub(crate) fn status_explanations_path(repo: &worktrunk::git::Repository) -> std::path::PathBuf {
+    worktrunk::cache::cache_dir(repo, "status-explanations").join("shown.json")
+}
+
+pub(crate) type ShownExplanations = std::collections::BTreeSet<String>;
+
+/// Add unseen pairs in priority order. A pair that cannot fit on its own
+/// does not hold the current cycle open at this width.
+fn status_legend(
+    items: &[ListItem],
+    available: usize,
+    shown: &mut ShownExplanations,
+) -> Vec<String> {
+    // The inline legend opens with two spaces and an opening parenthesis,
+    // and ends with a closing parenthesis.
+    let Some(mut remaining) = available.checked_sub("  ()".len()) else {
+        return Vec::new();
+    };
+    let mut visible = std::collections::HashSet::new();
+    let mut eligible: Vec<_> = items
+        .iter()
+        .flat_map(|item| item.status_symbols.explanations())
+        .filter_map(|(attention, pair)| {
+            let width = visual_width(&pair);
+            (width <= remaining && visible.insert(pair.clone())).then_some((attention, pair, width))
+        })
+        .collect();
+    if eligible.is_empty() {
+        return Vec::new();
+    }
+    if eligible.iter().all(|(_, pair, _)| shown.contains(pair)) {
+        shown.clear();
+    }
+
+    eligible.sort_by_key(|(attention, _, _)| !attention);
+    let mut legend = Vec::new();
+    for (_, pair, width) in eligible {
+        let cost = width + if legend.is_empty() { 0 } else { 2 };
+        if cost <= remaining && shown.insert(pair.clone()) {
+            remaining -= cost;
+            legend.push(pair);
+        }
+    }
+    legend
+}
+
 /// Format the summary line that closes the table.
 ///
 /// The footer is the only home a timed-out task has: it leaves an empty cell
@@ -353,11 +400,9 @@ impl SummaryMetrics {
 /// print the same number twice on adjacent lines.
 ///
 /// `max_width` bounds the line, following [`format_with_gutter`]'s
-/// convention: `None` detects the terminal, and no detectable width wraps
-/// nothing. The hidden-column list grows with every column a narrow terminal
-/// drops, so the footer is longest exactly where there is least room for it —
-/// at 40 columns it ran to 67 for a table that fit. Continuations indent
-/// under the text, keeping them subordinate to the `○`.
+/// convention. An undetectable width wraps nothing and omits the legend.
+/// Long summaries wrap, with continuations aligned under the text.
+/// Explanations appear inline only when the summary fits on one line.
 ///
 /// [`format_with_gutter`]: worktrunk::styling::format_with_gutter
 pub(crate) fn format_summary_message(
@@ -365,6 +410,7 @@ pub(crate) fn format_summary_message(
     show_branches: bool,
     hidden_columns: &[String],
     timed_out_count: usize,
+    shown: Option<&mut ShownExplanations>,
     max_width: Option<usize>,
 ) -> String {
     const INDENT: &str = "  "; // symbol + space, so continuations align under the text
@@ -382,15 +428,27 @@ pub(crate) fn format_summary_message(
         format!("Showing {summary}")
     };
 
-    let width = max_width.or_else(terminal_width).unwrap_or(usize::MAX);
-    let body = wrap_styled_text(&body, width.saturating_sub(INDENT.len()))
-        .iter()
-        // The wrapper keeps the space it broke on, which would land a
-        // continuation one column right of the indent.
-        .map(|line| line.trim())
-        .collect::<Vec<_>>()
-        .join(&format!("\n{INDENT}"));
+    let mut body = wrap_styled_text(
+        &body,
+        max_width.unwrap_or(usize::MAX).saturating_sub(INDENT.len()),
+    )
+    .iter()
+    // The wrapper keeps the space it broke on, which would land a
+    // continuation one column right of the indent.
+    .map(|line| line.trim())
+    .collect::<Vec<_>>()
+    .join(&format!("\n{INDENT}"));
 
+    if let Some(shown) = shown
+        && !body.contains('\n')
+        && let Some(remaining) =
+            max_width.and_then(|w| w.checked_sub(INDENT.len() + visual_width(&body)))
+    {
+        let legend = status_legend(items, remaining, shown);
+        if !legend.is_empty() {
+            body.push_str(&format!("  ({})", legend.join("  ")));
+        }
+    }
     format!("{INFO_SYMBOL} {dim}{body}{dim:#}")
 }
 
@@ -556,15 +614,107 @@ mod tests {
     }
 
     #[test]
+    fn status_legend_fits_complete_pairs_in_row_order() {
+        use ansi_str::AnsiStr;
+        use model::{Divergence, MainState};
+
+        let mut first = ListItem::new_branch("aaaaaaa".into(), "feature".into());
+        first.status_symbols.main_state = Some(MainState::WouldConflict);
+        first.status_symbols.upstream_divergence = Some(Divergence::Ahead);
+        let mut second = ListItem::new_branch("bbbbbbb".into(), "feature2".into());
+        second.status_symbols.main_state = Some(MainState::WouldConflict);
+        second.status_symbols.user_marker = Some(Some("↑".into()));
+        let items = [first, second];
+        let render = |width, visible: bool| {
+            let mut shown = ShownExplanations::new();
+            format_summary_message(
+                &items,
+                true,
+                &["Path".into()],
+                1,
+                visible.then_some(&mut shown),
+                width,
+            )
+            .ansi_strip()
+            .into_owned()
+        };
+        let summary = "○ Showing 0 worktrees, 2 branches, hidden: Path; 1 task timed out";
+        let one = format!("{summary}  (✗ would conflict)");
+        let both = format!("{summary}  (✗ would conflict  ⇡ ahead of remote)");
+        assert_eq!(render(None, true), summary);
+        assert_eq!(render(Some(200), false), summary);
+        assert_eq!(render(Some(visual_width(&both)), true), both);
+        assert_eq!(render(Some(visual_width(&both) - 1), true), one);
+        assert_eq!(render(Some(visual_width(&one)), true), one);
+        assert_eq!(render(Some(visual_width(&one) - 1), true), summary);
+        let wrapped = render(Some(30), false);
+        assert!(wrapped.contains('\n'));
+        assert_eq!(render(Some(30), true), wrapped);
+    }
+
+    #[test]
+    fn status_legend_skips_a_long_pair_to_fit_a_shorter_one() {
+        use ansi_str::AnsiStr;
+        use model::{MainState, OperationState, WorktreeState};
+
+        let mut item = ListItem::new_branch("aaaaaaa".into(), "feature".into());
+        item.status_symbols.operation_state = Some(OperationState::None);
+        item.status_symbols.worktree_state = Some(WorktreeState::DuplicateBranch);
+        item.status_symbols.main_state = Some(MainState::Ahead);
+        let expected = "○ Showing 0 worktrees  (↑ ahead of default)";
+        assert_eq!(
+            format_summary_message(
+                &[item],
+                false,
+                &[],
+                0,
+                Some(&mut ShownExplanations::new()),
+                Some(visual_width(expected))
+            )
+            .ansi_strip(),
+            expected
+        );
+    }
+
+    #[test]
+    fn status_legend_prioritizes_and_rotates_pairs_that_fit() {
+        use model::MainState;
+
+        let items = [
+            MainState::Ahead,
+            MainState::WouldConflict,
+            MainState::Diverged,
+            MainState::Integrated(worktrunk::git::IntegrationReason::Ancestor),
+        ]
+        .map(|state| {
+            let mut item = ListItem::new_branch("aaaaaaa".into(), "feature".into());
+            item.status_symbols.main_state = Some(state);
+            item
+        });
+        let pairs = items
+            .each_ref()
+            .map(|item| item.status_symbols.explanations().next().unwrap().1);
+        let width = pairs.iter().map(|pair| visual_width(pair)).max().unwrap() + 4;
+        let mut shown = ShownExplanations::new();
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[2].clone()]);
+        assert!(status_legend(&items, 0, &mut shown).is_empty());
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[3].clone()]);
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[0].clone()]);
+        assert_eq!(status_legend(&items, width, &mut shown), [pairs[1].clone()]);
+        assert_eq!(shown.into_iter().collect::<Vec<_>>(), [pairs[1].clone()]);
+    }
+
+    #[test]
     fn test_format_summary_message_timeout_variants() {
         use insta::assert_snapshot;
 
         // Nothing timed out. Failures alone leave the footer untouched — the
         // warning after the table names them and carries their count.
-        assert_snapshot!(format_summary_message(&[], false, &[], 0, None), @"[2m○[22m [2mShowing 0 worktrees[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 0, None, None), @"[2m○[22m [2mShowing 0 worktrees[0m");
         // Single timeout
-        assert_snapshot!(format_summary_message(&[], false, &[], 1, None), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 1, None, None), @"[2m○[22m [2mShowing 0 worktrees; 1 task timed out[0m");
         // Several timeouts
-        assert_snapshot!(format_summary_message(&[], false, &[], 3, None), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
+        assert_snapshot!(format_summary_message(&[], false, &[], 3, None, None), @"[2m○[22m [2mShowing 0 worktrees; 3 tasks timed out[0m");
     }
 }

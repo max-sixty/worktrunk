@@ -955,6 +955,7 @@ pub enum StateCommand {
 - **CI status**: Cached forge CI status per branch (30-60s TTL)
 - **Summaries**: Cached LLM-generated branch summaries (shown in `wt list --full` and `wt switch` preview)
 - **Git commands cache**: Cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
+- **Status explanations**: Symbols explained in the current `wt list` footer rotation
 - **Hints**: One-time hints that have been shown
 - **Log files**: Operation and debug logs
 - **Trash**: Staged worktree directories awaiting background deletion
@@ -975,7 +976,7 @@ CI cache entries show status, age, and the commit SHA they were fetched for."#)]
 - Previous branch
 - All branch markers
 - All variables
-- All caches (CI status, summaries, git commands)
+- All caches (CI status, summaries, git commands, status explanations)
 - All hints
 - All log files
 - Stale trash from worktree removal (`.git/wt/trash/`)
@@ -984,7 +985,7 @@ Prompts for confirmation before clearing, since this removes hand-authored
 markers and vars. Pass `--yes` to skip the prompt.
 
 To drop only the regenerable caches (CI status, summaries, git commands,
-hints, previous branch), run `wt config state cache clear` — it needs no
+status explanations, hints, previous branch), run `wt config state cache clear` — it needs no
 confirmation and leaves markers, vars, and the default-branch override
 untouched."#)]
     Clear,
@@ -998,6 +999,7 @@ untouched."#)]
 - **CI status** — forge CI per branch (30–60s TTL), shown in [`wt list`](/list/#ci-status)
 - **Summaries** — LLM-generated branch summaries (`wt list --full`, `wt switch` preview)
 - **Git commands** — cached merge-tree, ancestry, diff-stat, and `wt switch` preview results
+- **Status explanations** — explanations shown in the current `wt list` footer rotation
 - **Hints** — one-time hints already shown in this repo
 - **Previous branch** — the `wt switch -` target, re-recorded on the next switch
 
@@ -1072,7 +1074,7 @@ Enables `wt switch -` to return to the previous worktree, similar to `cd -` or `
 
 ## How it works
 
-Updated automatically on every `wt switch`. Stored in git config as `worktrunk.history`, with the worktree's path in `worktrunk.history-path`.
+Updated automatically on every `wt switch`. Stored with the worktree's path in `.git/wt/switch-history.json`.
 
 Without a subcommand, runs `get`. Use `set` to override or `clear` to reset."#
     )]

@@ -743,13 +743,11 @@ fn test_set_and_clear_default_branch() {
 }
 
 /// `switch_previous` / `set_switch_previous` round trip. Exercises
-/// `worktrunk.history` read + write through the bulk-config helpers.
+/// the switch history file read + write.
 #[test]
 fn test_switch_previous_roundtrip() {
     let repo = TestRepo::new();
     let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
-    // Populate the cache first to hit the in-memory update branch.
-    let _ = r.is_bare();
     assert_eq!(r.switch_previous(), None);
     r.set_switch_previous("feature-a").unwrap();
     assert_eq!(r.switch_previous(), Some("feature-a".to_string()));
@@ -1528,4 +1526,74 @@ fn test_primary_remote_skips_remote_with_empty_url() {
         r.primary_remote_url().as_deref(),
         Some("https://github.com/max-sixty/worktrunk.git")
     );
+}
+
+/// A remote with several `url` values (`git remote set-url --add`) fetches
+/// from the first, so Worktrunk reads the first too. An empty value resets
+/// the list, as in git, so the first URL after it wins.
+#[test]
+fn test_remote_url_reads_first_of_multiple_urls() {
+    let repo = TestRepo::new();
+    repo.run_git(&["remote", "add", "origin", "https://github.com/a/b.git"]);
+    repo.run_git(&[
+        "remote",
+        "set-url",
+        "--add",
+        "origin",
+        "https://gitlab.com/c/d.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        "remote.reset.url",
+        "https://github.com/old/x.git",
+    ]);
+    repo.run_git(&["config", "--add", "remote.reset.url", ""]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        "remote.reset.url",
+        "https://github.com/new/y.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        "remote.reset.url",
+        "https://gitlab.com/mirror/y.git",
+    ]);
+    repo.run_git(&[
+        "config",
+        "--add",
+        "remote.cleared.url",
+        "https://github.com/gone/z.git",
+    ]);
+    repo.run_git(&["config", "--add", "remote.cleared.url", ""]);
+
+    let r = Repository::at(repo.root_path().to_path_buf()).unwrap();
+    assert_eq!(
+        r.remote_url("origin").as_deref(),
+        Some("https://github.com/a/b.git")
+    );
+    assert_eq!(
+        r.remote_url("reset").as_deref(),
+        Some("https://github.com/new/y.git")
+    );
+    assert_eq!(r.remote_url("cleared"), None);
+
+    let mut all = r.all_remote_urls();
+    all.sort();
+    assert_eq!(
+        all,
+        vec![
+            (
+                "origin".to_string(),
+                "https://github.com/a/b.git".to_string()
+            ),
+            (
+                "reset".to_string(),
+                "https://github.com/new/y.git".to_string()
+            ),
+        ]
+    );
+    assert_eq!(r.project_identifier().unwrap(), "github.com/a/b");
 }

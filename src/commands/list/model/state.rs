@@ -33,6 +33,16 @@ pub enum Divergence {
 }
 
 impl Divergence {
+    pub(super) fn label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::InSync => Some("in sync with remote"),
+            Self::Ahead => Some("ahead of remote"),
+            Self::Behind => Some("behind remote"),
+            Self::Diverged => Some("diverged from remote"),
+        }
+    }
+
     /// Compute divergence state when a remote tracking branch exists.
     ///
     /// Returns `InSync` for 0/0 since we know a remote exists.
@@ -104,6 +114,21 @@ pub enum WorktreeState {
     Locked,
     /// Branch indicator (for branches without worktrees)
     Branch,
+}
+
+impl WorktreeState {
+    pub(super) fn label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::BranchWorktreeMismatch | Self::DuplicateBranch => {
+                Some("unexpected worktree path or duplicate branch")
+            }
+            Self::Detached => Some("detached HEAD"),
+            Self::Prunable => Some("prunable worktree"),
+            Self::Locked => Some("locked worktree"),
+            Self::Branch => Some("branch without worktree"),
+        }
+    }
 }
 
 impl std::fmt::Display for WorktreeState {
@@ -194,6 +219,21 @@ impl std::fmt::Display for MainState {
 }
 
 impl MainState {
+    pub(super) fn label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::IsMain => Some("main worktree"),
+            Self::WouldConflict => Some("would conflict"),
+            Self::Empty => Some("clean at default commit"),
+            Self::SameCommit => Some("dirty at default commit"),
+            Self::Integrated(_) => Some("already integrated"),
+            Self::Orphan => Some("no common ancestor"),
+            Self::Diverged => Some("diverged from default"),
+            Self::Ahead => Some("ahead of default"),
+            Self::Behind => Some("behind default"),
+        }
+    }
+
     /// Returns styled symbol with appropriate color, or None for None variant.
     ///
     /// Color semantics:
@@ -455,6 +495,14 @@ impl std::fmt::Display for OperationState {
 }
 
 impl OperationState {
+    pub(super) fn label(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Conflicts => Some("merge conflicts"),
+            Self::InProgress(_) => Some("operation in progress"),
+        }
+    }
+
     /// Returns styled symbol with appropriate color, or None for None variant.
     ///
     /// Color semantics:
@@ -486,6 +534,19 @@ impl OperationState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_states_have_no_label() {
+        assert_eq!(Divergence::None.label(), None);
+        assert_eq!(WorktreeState::None.label(), None);
+        assert_eq!(MainState::None.label(), None);
+        assert_eq!(OperationState::None.label(), None);
+    }
+
+    #[test]
+    fn diverged_main_state_describes_the_default_branch() {
+        assert_eq!(MainState::Diverged.label(), Some("diverged from default"));
+    }
 
     // ============================================================================
     // Divergence Tests
