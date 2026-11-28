@@ -362,18 +362,17 @@ impl Repository {
                 legacy |= self.unset_config(key)?;
             }
         }
-        let recorded = self.load_switch_history()?;
         let file = self.switch_history_path();
-        match std::fs::remove_file(&file) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        let removed = match std::fs::remove_file(&file) {
+            Ok(()) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
             Err(e) => {
                 return Err(e).with_context(|| {
                     format!("Failed to remove {}", format_path_for_display(&file))
                 });
             }
-        }
-        Ok(legacy || recorded.branch().is_some() || recorded.path.is_some())
+        };
+        Ok(legacy || removed)
     }
 
     /// The worktree `wt switch` last left, while it is still registered and
@@ -1254,7 +1253,7 @@ mod tests {
             repo.clear_switch_previous()
                 .unwrap_err()
                 .to_string()
-                .contains("switch-history.json")
+                .contains("Failed to remove")
         );
     }
 
