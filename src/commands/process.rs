@@ -132,9 +132,37 @@ fn create_detach_log(
 /// The log walker only collects `.log` files, so this name stays out of the
 /// listing. It holds the branch OID at the moment the log was created.
 pub(crate) fn log_head_sidecar(log_path: &Path) -> PathBuf {
+    sidecar_path(log_path, ".head")
+}
+
+/// Sidecar written next to a per-branch hook log: `{path}.incarnation`.
+///
+/// Holds the worktree id from [`worktree_incarnation`] at the moment the log
+/// was created. A later worktree of the same branch name does not rewrite it.
+pub(crate) fn log_incarnation_sidecar(log_path: &Path) -> PathBuf {
+    sidecar_path(log_path, ".incarnation")
+}
+
+fn sidecar_path(log_path: &Path, suffix: &str) -> PathBuf {
     let mut name = log_path.as_os_str().to_owned();
-    name.push(".head");
+    name.push(suffix);
     PathBuf::from(name)
+}
+
+fn record_sidecar(path: &Path, value: Option<&str>) -> std::io::Result<()> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => std::fs::write(path, format!("{value}\n")),
+        None => match std::fs::remove_file(path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            other => other,
+        },
+    }
+}
+
+fn record_sidecar_best_effort(path: &Path, value: Option<&str>, what: &str) {
+    if let Err(err) = record_sidecar(path, value) {
+        tracing::debug!("failed to record {what} {}: {err}", path.display());
+    }
 }
 
 /// Record `head` beside `log_path`, or remove a sidecar left by an earlier run.
@@ -143,14 +171,7 @@ pub(crate) fn log_head_sidecar(log_path: &Path) -> PathBuf {
 /// truncated on each run, and a stale sidecar would attribute the new output
 /// to the old commit.
 pub(crate) fn record_log_head(log_path: &Path, head: Option<&str>) -> std::io::Result<()> {
-    let sidecar = log_head_sidecar(log_path);
-    match head.map(str::trim).filter(|head| !head.is_empty()) {
-        Some(head) => std::fs::write(sidecar, format!("{head}\n")),
-        None => match std::fs::remove_file(sidecar) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
-        },
-    }
+    record_sidecar(&log_head_sidecar(log_path), head)
 }
 
 /// Record the OID, ignoring a failure. A missing sidecar reads back as
@@ -162,6 +183,14 @@ pub(crate) fn record_log_head_best_effort(log_path: &Path, head: Option<&str>) {
             log_head_sidecar(log_path).display()
         );
     }
+}
+
+pub(crate) fn record_log_incarnation_best_effort(log_path: &Path, id: Option<&str>) {
+    record_sidecar_best_effort(
+        &log_incarnation_sidecar(log_path),
+        id,
+        "hook log incarnation",
+    );
 }
 
 /// Branch-tip OID, only when `refs/heads/<branch>` still exists.
@@ -179,13 +208,89 @@ fn branch_ref_oid(repo: &Repository, branch: &str) -> Option<String> {
         .filter(|oid| !oid.is_empty())
 }
 
-pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
-    let head = std::fs::read_to_string(log_head_sidecar(log_path)).ok()?;
-    let head = head.trim();
-    if head.is_empty() {
+fn read_sidecar(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
         None
     } else {
-        Some(head.to_string())
+        Some(text.to_string())
+    }
+}
+
+pub(crate) fn read_log_head(log_path: &Path) -> Option<String> {
+    read_sidecar(&log_head_sidecar(log_path))
+}
+
+pub(crate) fn read_log_incarnation(log_path: &Path) -> Option<String> {
+    read_sidecar(&log_incarnation_sidecar(log_path))
+}
+
+/// Id of this worktree's life, stored as `wt-incarnation` in its git directory.
+///
+/// The same path returns the same id. Removing the worktree deletes the file
+/// with the git directory, and the next checkout of that branch name mints
+/// another one, including when both checkouts point at the same commit.
+pub(crate) fn worktree_incarnation(repo: &Repository, worktree_path: &Path) -> Option<String> {
+    let dir = repo.worktree_at(worktree_path).git_dir().ok()?;
+    read_or_mint_incarnation(&dir.join("wt-incarnation"))
+}
+
+fn read_or_mint_incarnation(path: &Path) -> Option<String> {
+    if let Some(id) = read_sidecar(path) {
+        return Some(id);
+    }
+    let id = format!("{:032x}", fastrand::u128(..));
+    match worktrunk::utils::write_new_atomically(path, &format!("{id}\n")) {
+        Ok(()) => Some(id),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => read_sidecar(path),
+        Err(error) => {
+            tracing::debug!(
+                "failed to record worktree incarnation {}: {error}",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+fn removed_incarnation_path(repo: &Repository, branch: &str) -> PathBuf {
+    repo.wt_dir()
+        .join("incarnations")
+        .join(sanitize_for_filename(branch))
+}
+
+/// Copy the worktree's id to a file that outlives removal.
+///
+/// `post-remove` runs after the worktree git directory is gone, so the log
+/// cannot read `wt-incarnation` from it. Called while the worktree still exists.
+pub(crate) fn note_removed_incarnation(repo: &Repository, worktree_path: &Path, branch: &str) {
+    let Some(id) = worktree_incarnation(repo, worktree_path) else {
+        return;
+    };
+    let path = removed_incarnation_path(repo, branch);
+    if let Some(parent) = path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::debug!(
+            "failed to create incarnation dir {}: {error}",
+            parent.display()
+        );
+        return;
+    }
+    record_sidecar_best_effort(&path, Some(&id), "removed worktree incarnation");
+}
+
+pub(crate) fn incarnation_for_hook_log(
+    repo: &Repository,
+    worktree_path: &Path,
+    branch: &str,
+    hook_type: HookType,
+) -> Option<String> {
+    if hook_type == HookType::PostRemove {
+        read_sidecar(&removed_incarnation_path(repo, branch))
+    } else {
+        worktree_incarnation(repo, worktree_path)
     }
 }
 
@@ -214,10 +319,16 @@ pub fn spawn_detached(
         .map(OsString::from)
         .chain(args.iter().cloned())
         .collect();
-    let head = if matches!(hook_log, HookLog::Shared(_)) {
-        None
+    let (head, incarnation) = if matches!(hook_log, HookLog::Shared(_)) {
+        (None, None)
     } else {
-        branch_ref_oid(repo, branch)
+        (
+            branch_ref_oid(repo, branch),
+            // This path runs in the destination after the removed worktree's
+            // git directory is gone. The id was copied out beforehand; reading
+            // the destination would record the wrong worktree.
+            read_sidecar(&removed_incarnation_path(repo, branch)),
+        )
     };
     let log_path = spawn_detached_exec(
         repo,
@@ -230,6 +341,7 @@ pub fn spawn_detached(
     )?;
     if !matches!(hook_log, HookLog::Shared(_)) {
         record_log_head_best_effort(&log_path, head.as_deref());
+        record_log_incarnation_best_effort(&log_path, incarnation.as_deref());
     }
     Ok(log_path)
 }
@@ -627,5 +739,57 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&log).unwrap(), "output");
         assert_eq!(read_log_head(&log), None);
         assert!(log_head_sidecar(&log).is_dir());
+    }
+
+    /// The same worktree keeps one id. A second checkout of the name, even at
+    /// the same commit, does not.
+    #[test]
+    fn worktree_incarnation_changes_when_the_worktree_is_replaced() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        let first = worktree_incarnation(&repo, test.root_path()).unwrap();
+        assert_eq!(
+            worktree_incarnation(&repo, test.root_path()).as_deref(),
+            Some(first.as_str())
+        );
+
+        let path = test.root_path().parent().unwrap().join("repo.feature");
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+        let feature = worktree_incarnation(&repo, &path).unwrap();
+        assert_ne!(feature, first);
+
+        test.run_git(&["worktree", "remove", "--force", path.to_str().unwrap()]);
+        test.run_git(&["branch", "-D", "feature"]);
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+        let again = worktree_incarnation(&repo, &path).unwrap();
+        assert_ne!(again, feature);
+        assert_eq!(
+            test.git_output(&["rev-parse", "feature"]),
+            test.git_output(&["rev-parse", "main"])
+        );
+    }
+
+    /// post-remove runs after the worktree git directory is gone, and still
+    /// records that worktree's id rather than the destination's.
+    #[test]
+    fn post_remove_keeps_the_removed_worktrees_incarnation() {
+        let test = worktrunk::testing::TestRepo::with_initial_commit();
+        let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
+        let path = test.root_path().parent().unwrap().join("repo.feature");
+        test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+        let id = worktree_incarnation(&repo, &path).unwrap();
+        note_removed_incarnation(&repo, &path, "feature");
+        test.run_git(&["worktree", "remove", "--force", path.to_str().unwrap()]);
+        test.run_git(&["branch", "-D", "feature"]);
+
+        assert_eq!(
+            incarnation_for_hook_log(&repo, test.root_path(), "feature", HookType::PostRemove)
+                .as_deref(),
+            Some(id.as_str())
+        );
+        assert_ne!(
+            worktree_incarnation(&repo, test.root_path()).as_deref(),
+            Some(id.as_str())
+        );
     }
 }

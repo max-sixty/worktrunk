@@ -620,6 +620,16 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         }
         Ok(log_path) => {
             record_log_head_best_effort(&log_path, head.as_deref());
+            let incarnation = crate::commands::process::incarnation_for_hook_log(
+                repo,
+                &spec.worktree_path,
+                &spec.branch,
+                spec.hook_type,
+            );
+            crate::commands::process::record_log_incarnation_best_effort(
+                &log_path,
+                incarnation.as_deref(),
+            );
             let cmd_display = format!("{} hook run-pipeline", wt_bin.display());
             worktrunk::command_log::log_command(&log_label, &cmd_display, None, None);
         }

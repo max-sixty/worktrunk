@@ -3234,6 +3234,17 @@ fn test_background_hook_records_branch_oid(repo: TestRepo) {
         .join("runner.log.head");
     crate::common::wait_for_file_content(&sidecar);
     assert_eq!(std::fs::read_to_string(&sidecar).unwrap().trim(), head);
+    let incarnation_sidecar = sidecar.with_file_name("runner.log.incarnation");
+    crate::common::wait_for_file_content(&incarnation_sidecar);
+    let git_dir = repo.git_output(&["rev-parse", "--absolute-git-dir"]);
+    let incarnation =
+        std::fs::read_to_string(std::path::Path::new(&git_dir).join("wt-incarnation")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&incarnation_sidecar)
+            .unwrap()
+            .trim(),
+        incarnation.trim()
+    );
 
     repo.commit("later");
     let output = wt_state_cmd(&repo, "logs", "get", &["--format=json"])
@@ -3249,6 +3260,7 @@ fn test_background_hook_records_branch_oid(repo: TestRepo) {
         .unwrap();
     assert_eq!(runner["head"], head);
     assert_ne!(runner["head"], repo.head_sha());
+    assert_eq!(runner["incarnation"], incarnation.trim());
 }
 
 /// A runner log that cannot be opened fails the pipeline's spawn, and the

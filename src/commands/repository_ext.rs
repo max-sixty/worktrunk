@@ -442,6 +442,10 @@ impl RepositoryCliExt for Repository {
             .run_command(&["rev-parse", "HEAD"])
             .ok()
             .map(|s| s.trim().to_string());
+        // post-remove logs are written after this git directory is gone.
+        if let Some(branch) = branch_name.as_deref() {
+            super::process::note_removed_incarnation(self, &worktree_path, branch);
+        }
 
         // No `.config/wt.toml` snapshot: `pre-remove` / `post-remove` were
         // selected and frozen into the `ApprovedHookPlan` at the gate
