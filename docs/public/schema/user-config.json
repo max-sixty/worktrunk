@@ -252,7 +252,7 @@
           ]
         },
         "verify": {
-          "description": "Run project hooks (default: true)",
+          "description": "Run user and project hooks (default: true)",
           "type": [
             "boolean",
             "null"
