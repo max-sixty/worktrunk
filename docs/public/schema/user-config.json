@@ -64,7 +64,7 @@
       "properties": {
         "command": {
           "default": null,
-          "description": "Shell command to invoke for generating commit messages\n\nExamples:\n- `\"llm -m claude-haiku-4.5\"`\n- `\"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku\"`\n\nThe command receives the prompt via stdin and should output the commit message.",
+          "description": "Shell command to invoke for generating commit messages\n\nExample: `\"MAX_THINKING_TOKENS=0 claude -p --no-session-persistence --model=haiku\"`\n\nThe command receives the prompt via stdin and should output the commit message.",
           "type": [
             "string",
             "null"
@@ -384,7 +384,7 @@
     },
     "UserProjectOverrides": {
       "additionalProperties": false,
-      "description": "Per-project overrides in the user's config file\n\nStored under `[projects.\"project-id\"]` in the user's config.\nThese are user preferences (not checked into git) that override\nthe corresponding global settings when set.\n\nThe key is a project identifier (`host/owner/repo`) or a `*` pattern\ncovering a set of them, so one entry can carry settings for every\nrepository on a host. Every matching entry applies, least- to\nmost-specific.\n\n# TOML Format\n```toml\n[projects.\"github.com/user/repo\"]\nworktree-path = \".worktrees/{{ branch | sanitize }}\"\n\n[projects.\"github.com/user/repo\".commit.generation]\ncommand = \"llm -m gpt-4\"\n\n[projects.\"github.com/user/repo\".list]\nfull = true\n\n[projects.\"github.com/user/repo\".merge]\nsquash = false\n\n# Every repository on a self-hosted forge whose name carries no brand\n[projects.\"git.company.example/*\"]\nforge.platform = \"gitlab\"\n```",
+      "description": "Per-project overrides in the user's config file\n\nStored under `[projects.\"project-id\"]` in the user's config.\nThese are user preferences (not checked into git) that override\nthe corresponding global settings when set.\n\nThe key is a project identifier (`host/owner/repo`) or a `*` pattern\ncovering a set of them, so one entry can carry settings for every\nrepository on a host. Every matching entry applies, least- to\nmost-specific.\n\n# TOML Format\n```toml\n[projects.\"github.com/user/repo\"]\nworktree-path = \".worktrees/{{ branch | sanitize }}\"\n\n[projects.\"github.com/user/repo\".commit.generation]\ncommand = \"opencode run -m anthropic/claude-haiku-5-5 --variant fast\"\n\n[projects.\"github.com/user/repo\".list]\nfull = true\n\n[projects.\"github.com/user/repo\".merge]\nsquash = false\n\n# Every repository on a self-hosted forge whose name carries no brand\n[projects.\"git.company.example/*\"]\nforge.platform = \"gitlab\"\n```",
       "properties": {
         "aliases": {
           "additionalProperties": {
