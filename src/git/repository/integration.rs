@@ -330,10 +330,11 @@ impl Repository {
         // unresolvable args — callers pass pre-resolved commit SHAs, see
         // `run_merge_tree`), anything else = error (corrupt repo, bad usage).
         //
-        // The probe runs in its own process group and writes the conflict bit
-        // before it exits. Cancellation does not signal it (#4273: a killed
-        // merge driver strands `.merge_file_*`), and the bit is on disk even
-        // when this process stops waiting (#4585).
+        // The probe writes the conflict bit before it exits. Cancellation does
+        // not signal it (#4273: a killed merge driver strands `.merge_file_*`),
+        // and the bit is on disk even when this process stops waiting (#4585).
+        // It stays in the caller's process group, so a terminal Ctrl-C still
+        // reaches it.
         #[cfg(unix)]
         let output = {
             // The on-disk key is the caller's cache pair, not the commits fed
@@ -376,8 +377,7 @@ exit "$status"
                     .arg(&cache_file)
                     .current_dir(&self.discovery_path)
                     .context(self.logging_context())
-                    .finish_once_started()
-                    .own_process_group(),
+                    .finish_once_started(),
             )
             .run()
             .with_context(|| format!("Failed to execute: git merge-tree --write-tree {a} {b}"))?
