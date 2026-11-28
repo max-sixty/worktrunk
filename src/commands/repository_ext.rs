@@ -442,10 +442,9 @@ impl RepositoryCliExt for Repository {
             .run_command(&["rev-parse", "HEAD"])
             .ok()
             .map(|s| s.trim().to_string());
-        // post-remove logs are written after this git directory is gone.
-        if let Some(branch) = branch_name.as_deref() {
-            super::process::note_removed_incarnation(self, &worktree_path, branch);
-        }
+        // Read only. Post-remove logs are written after this git directory is
+        // gone, and a dry-run plan must not create the file.
+        let removed_incarnation = super::process::read_worktree_incarnation(self, &worktree_path);
 
         // No `.config/wt.toml` snapshot: `pre-remove` / `post-remove` were
         // selected and frozen into the `ApprovedHookPlan` at the gate
@@ -461,6 +460,7 @@ impl RepositoryCliExt for Repository {
             integration_reason,
             force_worktree,
             removed_commit,
+            removed_incarnation,
             branch_checked_out_at,
         })
     }

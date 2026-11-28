@@ -262,6 +262,11 @@ struct PendingPipeline {
     hook_type: HookType,
     display_path: Option<PathBuf>,
     steps: Vec<SourcedStep>,
+    /// True when this post-remove pipeline was registered by a removal. The
+    /// id is whatever planning read, and `None` stays `None` instead of
+    /// minting one in the destination worktree.
+    from_removal: bool,
+    removed_incarnation: Option<String>,
 }
 
 impl<'a> HookAnnouncer<'a> {
@@ -293,6 +298,8 @@ impl<'a> HookAnnouncer<'a> {
                 hook_type,
                 display_path: display_path.map(Path::to_path_buf),
                 steps,
+                from_removal: false,
+                removed_incarnation: None,
             });
         }
     }
@@ -324,6 +331,21 @@ impl<'a> HookAnnouncer<'a> {
         )?;
         self.add_steps(ctx, hook_type, display_path, flat);
         Ok(())
+    }
+
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Mark post-remove pipelines registered since `from` as coming from a
+    /// removal, and give them the id planning read.
+    pub fn assign_removed_incarnation(&mut self, from: usize, id: Option<String>) {
+        for pipeline in &mut self.pending[from..] {
+            if pipeline.hook_type == HookType::PostRemove {
+                pipeline.from_removal = true;
+                pipeline.removed_incarnation = id.clone();
+            }
+        }
     }
 
     /// Record that this command removed the worktree at `path`, so a pipeline
@@ -586,6 +608,8 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         hook_type,
         source,
         steps: pipeline.steps.into_iter().map(|step| step.step).collect(),
+        from_removal: pipeline.from_removal,
+        removed_incarnation: pipeline.removed_incarnation,
     };
 
     let spec_json = serde_json::to_vec(&spec).context("failed to serialize pipeline spec")?;
@@ -620,11 +644,11 @@ fn spawn_hook_pipeline_quiet(repo: &Repository, pipeline: PendingPipeline) -> an
         }
         Ok(log_path) => {
             record_log_head_best_effort(&log_path, head.as_deref());
-            let incarnation = crate::commands::process::incarnation_for_hook_log(
+            let incarnation = crate::commands::process::hook_log_incarnation(
                 repo,
                 &spec.worktree_path,
-                &spec.branch,
-                spec.hook_type,
+                spec.from_removal,
+                spec.removed_incarnation.as_deref(),
             );
             crate::commands::process::record_log_incarnation_best_effort(
                 &log_path,

@@ -231,9 +231,37 @@ pub(crate) fn read_log_incarnation(log_path: &Path) -> Option<String> {
 /// The same path returns the same id. Removing the worktree deletes the file
 /// with the git directory, and the next checkout of that branch name mints
 /// another one, including when both checkouts point at the same commit.
+///
+/// Minting happens when a hook log is written. Planning a removal only reads
+/// the file, so a dry run does not create one.
 pub(crate) fn worktree_incarnation(repo: &Repository, worktree_path: &Path) -> Option<String> {
     let dir = repo.worktree_at(worktree_path).git_dir().ok()?;
     read_or_mint_incarnation(&dir.join("wt-incarnation"))
+}
+
+/// `wt-incarnation` if a hook already wrote one. Does not create the file.
+pub(crate) fn read_worktree_incarnation(repo: &Repository, worktree_path: &Path) -> Option<String> {
+    let dir = repo.worktree_at(worktree_path).git_dir().ok()?;
+    read_sidecar(&dir.join("wt-incarnation"))
+}
+
+/// Id to store beside a hook log.
+///
+/// A removal pipeline passes the id it read while the worktree still existed,
+/// including `None` when that checkout never minted one. Any other run,
+/// including a manual `wt hook post-remove` in a live worktree, reads or mints
+/// the id of `worktree_path`.
+pub(crate) fn hook_log_incarnation(
+    repo: &Repository,
+    worktree_path: &Path,
+    from_removal: bool,
+    removed_incarnation: Option<&str>,
+) -> Option<String> {
+    if from_removal {
+        removed_incarnation.map(str::to_owned)
+    } else {
+        worktree_incarnation(repo, worktree_path)
+    }
 }
 
 fn read_or_mint_incarnation(path: &Path) -> Option<String> {
@@ -251,46 +279,6 @@ fn read_or_mint_incarnation(path: &Path) -> Option<String> {
             );
             None
         }
-    }
-}
-
-fn removed_incarnation_path(repo: &Repository, branch: &str) -> PathBuf {
-    repo.wt_dir()
-        .join("incarnations")
-        .join(sanitize_for_filename(branch))
-}
-
-/// Copy the worktree's id to a file that outlives removal.
-///
-/// `post-remove` runs after the worktree git directory is gone, so the log
-/// cannot read `wt-incarnation` from it. Called while the worktree still exists.
-pub(crate) fn note_removed_incarnation(repo: &Repository, worktree_path: &Path, branch: &str) {
-    let Some(id) = worktree_incarnation(repo, worktree_path) else {
-        return;
-    };
-    let path = removed_incarnation_path(repo, branch);
-    if let Some(parent) = path.parent()
-        && let Err(error) = std::fs::create_dir_all(parent)
-    {
-        tracing::debug!(
-            "failed to create incarnation dir {}: {error}",
-            parent.display()
-        );
-        return;
-    }
-    record_sidecar_best_effort(&path, Some(&id), "removed worktree incarnation");
-}
-
-pub(crate) fn incarnation_for_hook_log(
-    repo: &Repository,
-    worktree_path: &Path,
-    branch: &str,
-    hook_type: HookType,
-) -> Option<String> {
-    if hook_type == HookType::PostRemove {
-        read_sidecar(&removed_incarnation_path(repo, branch))
-    } else {
-        worktree_incarnation(repo, worktree_path)
     }
 }
 
@@ -324,10 +312,11 @@ pub fn spawn_detached(
     } else {
         (
             branch_ref_oid(repo, branch),
-            // This path runs in the destination after the removed worktree's
-            // git directory is gone. The id was copied out beforehand; reading
-            // the destination would record the wrong worktree.
-            read_sidecar(&removed_incarnation_path(repo, branch)),
+            // Internal removal logs run in the destination. The removed
+            // checkout's id belongs on the post-remove hook pipeline, which
+            // receives it from the plan. Minting one here would write into
+            // the destination's git directory.
+            None::<String>,
         )
     };
     let log_path = spawn_detached_exec(
@@ -769,27 +758,33 @@ mod tests {
         );
     }
 
-    /// post-remove runs after the worktree git directory is gone, and still
-    /// records that worktree's id rather than the destination's.
+    /// Planning reads an id a hook already wrote and does not create one.
+    /// A removal log uses that captured value instead of the destination.
     #[test]
-    fn post_remove_keeps_the_removed_worktrees_incarnation() {
+    fn removal_uses_the_id_it_read_and_does_not_mint() {
         let test = worktrunk::testing::TestRepo::with_initial_commit();
         let repo = worktrunk::git::Repository::at(test.root_path()).unwrap();
         let path = test.root_path().parent().unwrap().join("repo.feature");
         test.run_git(&["worktree", "add", "-b", "feature", path.to_str().unwrap()]);
+
+        assert_eq!(read_worktree_incarnation(&repo, &path), None);
+        let git_dir = repo.worktree_at(&path).git_dir().unwrap();
+        assert!(!git_dir.join("wt-incarnation").exists());
+
         let id = worktree_incarnation(&repo, &path).unwrap();
-        note_removed_incarnation(&repo, &path, "feature");
-        test.run_git(&["worktree", "remove", "--force", path.to_str().unwrap()]);
-        test.run_git(&["branch", "-D", "feature"]);
+        assert_eq!(
+            read_worktree_incarnation(&repo, &path).as_deref(),
+            Some(id.as_str())
+        );
 
         assert_eq!(
-            incarnation_for_hook_log(&repo, test.root_path(), "feature", HookType::PostRemove)
-                .as_deref(),
+            hook_log_incarnation(&repo, test.root_path(), true, Some(&id)).as_deref(),
             Some(id.as_str())
         );
-        assert_ne!(
-            worktree_incarnation(&repo, test.root_path()).as_deref(),
-            Some(id.as_str())
+        assert_eq!(
+            hook_log_incarnation(&repo, test.root_path(), true, None),
+            None
         );
+        assert!(!repo.wt_dir().join("incarnations").exists());
     }
 }

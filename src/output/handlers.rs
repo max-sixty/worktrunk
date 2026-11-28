@@ -1257,6 +1257,7 @@ fn handle_remove_output_inner(
             integration_reason,
             force_worktree,
             removed_commit,
+            removed_incarnation,
             branch_checked_out_at,
         } => handle_removed_worktree_output(
             WorktreeRemovalContext {
@@ -1269,6 +1270,7 @@ fn handle_remove_output_inner(
                 integration_reason: *integration_reason,
                 force_worktree: *force_worktree,
                 removed_commit: removed_commit.as_deref(),
+                removed_incarnation: removed_incarnation.clone(),
                 branch_checked_out_at: branch_checked_out_at.as_ref(),
                 hook_plan,
                 execution,
@@ -1530,6 +1532,7 @@ fn spawn_hooks_after_remove(
     // `post-remove` is *about* the removed worktree (gone by now); it was
     // selected and frozen into `hook_plan` at the gate, anchored at the removed
     // worktree path. `remove_ctx` (rooted at `ctx.main_path`) only renders.
+    let pending_before = announcer.pending_len();
     register_planned(
         announcer,
         ctx.hook_plan,
@@ -1539,6 +1542,7 @@ fn spawn_hooks_after_remove(
         &extra_vars,
         display_path,
     )?;
+    announcer.assign_removed_incarnation(pending_before, ctx.removed_incarnation.clone());
 
     // Post-switch: only when the user actually changed directory. Anchored at
     // the destination worktree (where the user landed) at the gate.
@@ -1798,6 +1802,9 @@ struct WorktreeRemovalContext<'a> {
     integration_reason: Option<IntegrationReason>,
     force_worktree: bool,
     removed_commit: Option<&'a str>,
+    /// `wt-incarnation` read while the worktree existed. Owned because the
+    /// plan's value has to outlive the match that borrowed it.
+    removed_incarnation: Option<String>,
     /// A surviving checkout of this branch, when one exists. `Some` means the
     /// branch was retained rather than deleted; see [`SharedBranchCheckout`].
     branch_checked_out_at: Option<&'a SharedBranchCheckout>,

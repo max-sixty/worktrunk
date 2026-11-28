@@ -91,6 +91,12 @@ pub(super) struct PipelineSpec {
     pub hook_type: HookType,
     pub source: HookSource,
     pub steps: Vec<PreparedStep>,
+    /// Set for a post-remove pipeline spawned by removal. See
+    /// [`crate::commands::process::hook_log_incarnation`].
+    #[serde(default)]
+    pub from_removal: bool,
+    #[serde(default)]
+    pub removed_incarnation: Option<String>,
 }
 
 /// Run a serialized pipeline from stdin.
@@ -116,11 +122,11 @@ pub fn run_pipeline() -> anyhow::Result<()> {
         Repository::at(&spec.worktree_path).context("failed to open repository for pipeline")?;
 
     let log_dir = repo.wt_logs_dir();
-    let incarnation = super::process::incarnation_for_hook_log(
+    let incarnation = super::process::hook_log_incarnation(
         &repo,
         &spec.worktree_path,
-        &spec.branch,
-        spec.hook_type,
+        spec.from_removal,
+        spec.removed_incarnation.as_deref(),
     );
 
     let error_wrapper = hook_error_wrapper(spec.hook_type, spec.source, true);

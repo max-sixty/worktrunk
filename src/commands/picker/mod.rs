@@ -2940,6 +2940,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
 
@@ -3099,6 +3100,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
 
@@ -3249,6 +3251,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
 
@@ -3949,6 +3952,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         assert_eq!(
@@ -3966,6 +3970,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         assert_eq!(
@@ -4420,6 +4425,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
 
@@ -4525,6 +4531,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         assert!(super::removal_target_still_present(
@@ -4591,6 +4598,7 @@ pub mod tests {
             integration_reason: None,
             force_worktree: false,
             removed_commit: None,
+            removed_incarnation: None,
             branch_checked_out_at: None,
         };
         assert!(
